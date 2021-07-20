@@ -11,12 +11,24 @@ try:
 except Exception as e:
     raise SystemExit(f"Usage: {sys.argv[0]} kismetIP kismetUN kismetPW")
 
+def parse_msg():
+    print("Parsing a MESSAGE")
+
 
 def on_message(ws, message):
     #print(message)
     #Put stuff here to parse messages and do stuff
+    tsp = "TIMESTAMP"
+    msg = "MESSAGE"
     deser_msg = json.loads(message)
-    print(deser_msg['kismet.system.timestamp.sec'])
+
+    for key in deser_msg.keys():
+        if key == tsp:
+            print("Looks like a time stamp")
+        if key == msg:
+            print("Looks like a message")
+            parse_msg()
+    print("Message Parsed")
 
 def on_error(ws, error):
     print(error)
@@ -28,11 +40,10 @@ def on_close(ws, close_status_code, close_msg):
 
 def on_open(ws):
 
-    #time.sleep(1)
-    #ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
+    time.sleep(1)
+    ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
     time.sleep(1)
     ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
-
 
 def ws_run(pid):
     ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(kismetIP,kismetUN, kismetPW),
@@ -40,10 +51,9 @@ def ws_run(pid):
                               on_message=on_message,
                               on_error=on_error,
                               on_close=on_close)
-
     ws.run_forever()
 
-def print_loop(timeout):
+def input_watch(timeout):
     while True:
         print("Print Loop...")
         time.sleep(timeout)
@@ -53,7 +63,7 @@ if __name__ == "__main__":
     #websocket.enableTrace(True)
     # creating processes
     p1 = multiprocessing.Process(target=ws_run, args=(1, ))
-    p2 = multiprocessing.Process(target=print_loop, args=(3, ))
+    p2 = multiprocessing.Process(target=input_watch, args=(3, ))
 
     # starting process 1
     p1.start()
@@ -61,9 +71,9 @@ if __name__ == "__main__":
     p2.start()
 
     # wait until process 1 is finished
-    #p1.join() #I do not want to wait
+    p1.join() #I do not want to wait
     # wait until process 2 is finished
-    #p2.join() #I do not want to wait
+    p2.join() #I do not want to wait
 
     # both processes finished
     print("Running...")
