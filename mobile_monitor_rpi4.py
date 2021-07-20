@@ -3,6 +3,10 @@ import json
 import time
 # importing the multiprocessing module
 import multiprocessing
+import sys
+
+kismetUN = sys.argv[1]
+kismetPW = sys.argv[2]
 
 
 def on_message(ws, message):
@@ -31,7 +35,7 @@ def on_open(ws):
     #thread.start_new_thread(run, ())
 
 def ws_run(pid):
-    ws = websocket.WebSocketApp("ws://localhost:2501/eventbus/events.ws?user=username&password=userpass",
+    ws = websocket.WebSocketApp("ws://localhost:2501/eventbus/events.ws?user={}&password={}".format(kismetUN, kismetPW),
                               on_open=on_open,
                               on_message=on_message,
                               on_error=on_error,
