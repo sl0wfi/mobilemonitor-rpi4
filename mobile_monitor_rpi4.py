@@ -16,8 +16,8 @@ def on_message(ws, message):
     #print(message)
     #Put stuff here to parse messages and do stuff
     deser_msg = json.loads(message)
-    print(deser_msg)
-    
+    print(deser_msg['kismet.system.timestamp.sec'])
+
 def on_error(ws, error):
     print(error)
     #Put stuff here to do stuff on an error
