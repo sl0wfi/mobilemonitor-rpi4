@@ -46,9 +46,7 @@ def print_loop(pid):
 
 if __name__ == "__main__":
     #websocket.enableTrace(True)
-
-                                                                      45        45,21         All
-# creating processes
+    # creating processes
     p1 = multiprocessing.Process(target=ws_run, args=(1, ))
     #p2 = multiprocessing.Process(target=print_cube, args=(10, ))
 
