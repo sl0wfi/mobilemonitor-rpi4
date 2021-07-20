@@ -25,9 +25,9 @@ def on_open(ws):
     #def run(*args):
         #for i in range(3):
         time.sleep(1)
-        ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
+        #ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
         time.sleep(1)
-        #ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
+        ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
         #time.sleep(1)
 
         #ws.close() #I do not understand why this is here, in the on_open function?!? Maybe for threading?
@@ -40,6 +40,9 @@ def ws_run(pid):
                               on_message=on_message,
                               on_error=on_error,
                               on_close=on_close)
+    print("tick")
+    time.sleep(1)
+    print("tock")
     ws.run_forever()
 
 def print_loop(pid):
@@ -65,4 +68,4 @@ if __name__ == "__main__":
     #p2.join() #I do not want to wait
 
     # both processes finished
-    print("Done!")
+    print("Running...")
