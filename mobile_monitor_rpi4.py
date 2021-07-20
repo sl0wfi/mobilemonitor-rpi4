@@ -24,7 +24,7 @@ def on_close(ws, close_status_code, close_msg):
 def on_open(ws):
     #def run(*args):
         #for i in range(3):
-        time.sleep(1)
+        #time.sleep(1)
         #ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
         time.sleep(1)
         ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
@@ -40,27 +40,25 @@ def ws_run(pid):
                               on_message=on_message,
                               on_error=on_error,
                               on_close=on_close)
-    print("tick")
-    time.sleep(1)
-    print("tock")
+
     ws.run_forever()
 
-def print_loop(pid):
+def print_loop(timeout):
     while True:
         print("Print Loop...")
-        time.sleep(1)
+        time.sleep(timeout)
 
 
 if __name__ == "__main__":
     #websocket.enableTrace(True)
     # creating processes
     p1 = multiprocessing.Process(target=ws_run, args=(1, ))
-    #p2 = multiprocessing.Process(target=print_cube, args=(10, ))
+    p2 = multiprocessing.Process(target=print_loop, args=(3, ))
 
     # starting process 1
     p1.start()
     # starting process 2
-    #p2.start()
+    p2.start()
 
     # wait until process 1 is finished
     #p1.join() #I do not want to wait
