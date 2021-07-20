@@ -13,9 +13,11 @@ except Exception as e:
 
 
 def on_message(ws, message):
-    print(message)
+    #print(message)
     #Put stuff here to parse messages and do stuff
-
+    deser_msg = json.loads(message)
+    print(deser_msg)
+    
 def on_error(ws, error):
     print(error)
     #Put stuff here to do stuff on an error
@@ -25,17 +27,12 @@ def on_close(ws, close_status_code, close_msg):
     #Put stuff here for a closed socket
 
 def on_open(ws):
-    #def run(*args):
-        #for i in range(3):
-        #time.sleep(1)
-        #ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
-        time.sleep(1)
-        ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
-        #time.sleep(1)
 
-        #ws.close() #I do not understand why this is here, in the on_open function?!? Maybe for threading?
-        #print("thread terminating...")
-    #thread.start_new_thread(run, ())
+    #time.sleep(1)
+    #ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
+    time.sleep(1)
+    ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
+
 
 def ws_run(pid):
     ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(kismetIP,kismetUN, kismetPW),
