@@ -1,5 +1,6 @@
 import websocket
 import json
+from collections import OrderedDict
 import time
 import multiprocessing
 import sys
@@ -11,9 +12,9 @@ try:
 except Exception as e:
     raise SystemExit(f"Usage: {sys.argv[0]} kismetIP kismetUN kismetPW")
 
-def parse_msg():
-    print("Parsing a MESSAGE")
-
+def parse_msg(deser_msg):
+    #print("Parsing a MESSAGE")
+    print(deser_msg['MESSAGE']['kismet.messagebus.message_string']) #print the interesting bit
 
 def on_message(ws, message):
     #print(message)
@@ -27,7 +28,7 @@ def on_message(ws, message):
             print("Looks like a time stamp")
         if key == msg:
             print("Looks like a message")
-            parse_msg()
+            parse_msg(deser_msg)
     print("Message Parsed")
 
 def on_error(ws, error):
@@ -42,8 +43,8 @@ def on_open(ws):
 
     time.sleep(1)
     ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
-    time.sleep(1)
-    ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
+    #time.sleep(1)
+    #ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
 
 def ws_run(pid):
     ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(kismetIP,kismetUN, kismetPW),
@@ -55,7 +56,7 @@ def ws_run(pid):
 
 def input_watch(timeout):
     while True:
-        print("Print Loop...")
+        print("Input Loop...")
         time.sleep(timeout)
 
 
