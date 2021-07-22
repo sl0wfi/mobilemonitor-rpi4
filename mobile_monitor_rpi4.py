@@ -19,9 +19,10 @@ def parse_msg(msg_dict):
     #print(msg_str)
     if "SSID" in msg_str:
         print("Found new SSID")
-    if "device" in msg_str:
-        print("Found new device")
-    if "Connected to gpsd server" in msg_str
+
+    if "new 802.11 Wi-Fi access point" in msg_str:
+        print("Found new access point")
+    if "Connected to gpsd server" in msg_str:
         print("GPS Connection Success")
 
 def on_message(ws, message):
@@ -51,15 +52,19 @@ def on_open(ws):
 
     time.sleep(1)
     ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
+    print("Connected to kisemt at {}".format(kismetIP))
     #time.sleep(1)
     #ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
 
 def ws_run(pid):
-    ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(kismetIP,kismetUN, kismetPW),
+    try:
+        ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(kismetIP,kismetUN, kismetPW),
                               on_open=on_open,
                               on_message=on_message,
                               on_error=on_error,
                               on_close=on_close)
+    except:
+        print("Can not connect to kismet, waiting a few seconds...")
     ws.run_forever()
 
 def input_watch(timeout):
