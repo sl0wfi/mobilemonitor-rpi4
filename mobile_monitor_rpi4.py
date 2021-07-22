@@ -46,10 +46,10 @@ def on_error(ws, error):
 
 def on_close(ws, close_status_code, close_msg):
     #print("### closed ###")
-    print('disconnected from server')
-    print ("Retry : %s" % time.ctime())
-    time.sleep(10)
-    connect_websocket() # retry per 10 seconds
+    print("Connection closed, will rety in 3 seconds")
+    #print ("Retry : %s" % time.ctime())
+    time.sleep(3)
+    ws_run() # retry per 10 seconds
     #Put stuff here for a closed socket
 
 def on_open(ws):
@@ -59,8 +59,8 @@ def on_open(ws):
     #time.sleep(1)
     #ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
 
-def ws_run(pid):
-    ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(kismetIP,kismetUN, kismetPW),
+def ws_run():
+    ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(kismetIP,kismetUN,kismetPW),
                               on_open=on_open,
                               on_message=on_message,
                               on_error=on_error,
@@ -79,8 +79,8 @@ def input_watch(timeout):
 if __name__ == "__main__":
     #websocket.enableTrace(True)
     # creating processes
-    p1 = multiprocessing.Process(target=ws_run, args=(1, ))
-    p2 = multiprocessing.Process(target=input_watch, args=(3, ))
+    p1 = multiprocessing.Process(target=ws_run)
+    p2 = multiprocessing.Process(target=input_watch, args=(3,))
 
     # starting process 1
     p1.start()
