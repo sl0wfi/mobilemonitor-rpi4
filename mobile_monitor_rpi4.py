@@ -41,6 +41,7 @@ def on_message(ws, message):
     print("Message Parsed")
 
 def on_error(ws, error):
+    print("Connection Error")
     print(error)
     #Put stuff here to do stuff on an error
 
@@ -65,10 +66,7 @@ def ws_run():
                               on_message=on_message,
                               on_error=on_error,
                               on_close=on_close)
-
-    wst = threading.Thread(target=ws.run_forever)
-    wst.daemon = True
-    wst.start()
+    ws.run_forever
 
 def input_watch(timeout):
     while True:
@@ -88,9 +86,9 @@ if __name__ == "__main__":
     p2.start()
 
     # wait until process 1 is finished
-    p1.join() #I do not want to wait
+    p1.join()
     # wait until process 2 is finished
-    p2.join() #I do not want to wait
+    p2.join()
 
     # both processes finished
-    print("Running...")
+    print("Program finished.")
