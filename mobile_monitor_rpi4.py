@@ -1,7 +1,7 @@
 import websocket
 import json
-from collections import OrderedDict
 import time
+import threading
 import multiprocessing
 import sys
 
@@ -45,27 +45,30 @@ def on_error(ws, error):
     #Put stuff here to do stuff on an error
 
 def on_close(ws, close_status_code, close_msg):
-    print("### closed ###")
+    #print("### closed ###")
+    print('disconnected from server')
+    print ("Retry : %s" % time.ctime())
+    time.sleep(10)
+    connect_websocket() # retry per 10 seconds
     #Put stuff here for a closed socket
 
 def on_open(ws):
-
+    print("Connected to kisemt at {}".format(kismetIP))
     time.sleep(1)
     ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
-    print("Connected to kisemt at {}".format(kismetIP))
     #time.sleep(1)
     #ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"})) #Useful to verify connection during dev, but noisy
 
 def ws_run(pid):
-    try:
-        ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(kismetIP,kismetUN, kismetPW),
+    ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(kismetIP,kismetUN, kismetPW),
                               on_open=on_open,
                               on_message=on_message,
                               on_error=on_error,
                               on_close=on_close)
-    except:
-        print("Can not connect to kismet, waiting a few seconds...")
-    ws.run_forever()
+
+    wst = threading.Thread(target=ws.run_forever)
+    wst.daemon = True
+    wst.start()
 
 def input_watch(timeout):
     while True:
