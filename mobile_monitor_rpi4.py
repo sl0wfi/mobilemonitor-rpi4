@@ -15,9 +15,14 @@ except Exception as e:
 def parse_msg(msg_dict):
     #print("Parsing a MESSAGE")
     #print(deser_msg['MESSAGE']['kismet.messagebus.message_string']) #print the interesting bit
-    msg_dict['MESSAGE']['kismet.messagebus.message_string']
-    msg_str = deser_msg['MESSAGE']['kismet.messagebus.message_string']
-    print(msg_str)
+    msg_str = msg_dict['MESSAGE']['kismet.messagebus.message_string']
+    #print(msg_str)
+    if "SSID" in msg_str:
+        print("Found new SSID")
+    if "device" in msg_str:
+        print("Found new device")
+    if "Connected to gpsd server" in msg_str
+        print("GPS Connection Success")
 
 def on_message(ws, message):
     #print(message)
