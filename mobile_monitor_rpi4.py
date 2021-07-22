@@ -12,9 +12,12 @@ try:
 except Exception as e:
     raise SystemExit(f"Usage: {sys.argv[0]} kismetIP kismetUN kismetPW")
 
-def parse_msg(deser_msg):
+def parse_msg(msg_dict):
     #print("Parsing a MESSAGE")
-    print(deser_msg['MESSAGE']['kismet.messagebus.message_string']) #print the interesting bit
+    #print(deser_msg['MESSAGE']['kismet.messagebus.message_string']) #print the interesting bit
+    msg_dict['MESSAGE']['kismet.messagebus.message_string']
+    msg_str = deser_msg['MESSAGE']['kismet.messagebus.message_string']
+    print(msg_str)
 
 def on_message(ws, message):
     #print(message)
