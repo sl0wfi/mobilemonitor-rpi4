@@ -1,9 +1,22 @@
+# Import libraries
+
 import websocket
 import json
 import time
 import threading
 import multiprocessing
 import sys
+import RPi.GPIO as GPIO
+
+#Set the mode of the GPIO libaray to use the BCM pin numbers, not the board numbers.
+GPIO.setmode(GPIO.BCM)
+
+#Set the GPIO BCM pin numbers to be used for each function
+buzzer = 18
+led_SSID = 23
+led_AP = 24
+led_client = 25
+led_GPS = 12 #This is a good candidate for a RGBW LED - RED=no GSPSd connection, YELLOW=GPSd connected but no lock, GREEN= GPS locked
 
 try:
     kismetIP = sys.argv[1]
@@ -19,17 +32,20 @@ def parse_msg(msg_dict):
     #print(msg_str)
     if "SSID" in msg_str:
         print("Found new SSID")
+        #put code here to blink led_SSID
 
     if "new 802.11 Wi-Fi access point" in msg_str:
         print("Found new access point")
+        #put code here to blink led_AP
     if "Connected to gpsd server" in msg_str:
         print("GPS Connection Success")
+        #put code here to set GPS LED to YELLOW
 
 def on_message(ws, message):
     #print(message)
     #Put stuff here to parse messages and do stuff
-    tsp = "TIMESTAMP"
-    msg = "MESSAGE"
+    tsp = "TIMESTAMP" # String to recognize a timestamp message
+    msg = "MESSAGE" #String to recognize a message message
     deser_msg = json.loads(message)
 
     for key in deser_msg.keys():
@@ -66,7 +82,7 @@ def ws_run():
                               on_message=on_message,
                               on_error=on_error,
                               on_close=on_close)
-    ws.run_forever
+    ws.run_forever()
 
 def input_watch(timeout):
     while True:
