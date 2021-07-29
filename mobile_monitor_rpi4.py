@@ -257,14 +257,14 @@ class ws_connector(object):
     def ws_run(self):
         print("Starting websocket connection")
         self.ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(self.kismetIP,self.kismetUN,self.kismetPW),
-                                on_open=self.on_open,
-                                on_message=self.on_message,
-                                on_error=self.on_error,
-                                on_close=self.on_close)
-        self.ws.on_open = self.on_open
-        self.ws.on_message = self.on_message
-        self.ws.on_error = self.on_error
-        self.ws.on_close = self.on_close
+                                on_open= lambda ws:     self.on_open(self.ws),
+                                on_message= lambda ws,msg: self.on_message(self.ws, self.msg),
+                                on_error= lambda ws,msg: self.on_error(self.ws, self.msg),
+                                on_close= lambda ws:     self.on_close(self.ws))
+        #self.ws.on_open = self.on_open
+        #self.ws.on_message = self.on_message
+        #self.ws.on_error = self.on_error
+        #self.ws.on_close = self.on_close
         # use infinite loop to restart (avoids stack overflow from recursion in on_close cb)
         while True:
             self.ws.run_forever()
