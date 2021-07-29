@@ -27,9 +27,9 @@ except Exception as e:
     print("Failed to load gpiozero python3 module. Installation is available from pip")
     sys.exit(1)
 try:
-    import websocket
+    import websockets
 except Exception as e:
-    print("Failed to load websocket python3 module. Installation is available: pip install websocket-client")
+    print("Failed to load websockets python3 module.")
     sys.exit(1)
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -257,10 +257,10 @@ class ws_connector(object):
     def ws_run(self):
         print("Starting websocket connection")
         self.ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(self.kismetIP,self.kismetUN,self.kismetPW),
-                                on_open=self.on_open,
-                                on_message=self.on_message,
-                                on_error=self.on_error,
-                                on_close=self.on_close)
+                                on_open= lambda ws: self.on_open(ws),
+                                on_message= lambda ws,message self.on_message(ws, message),
+                                on_error= lambda ws,msg: self.on_error(ws, msg),
+                                on_close= lambda ws:     self.on_close(ws))
         # use infinite loop to restart (avoids stack overflow from recursion in on_close cb)
         while True:
             self.ws.run_forever()
