@@ -51,7 +51,82 @@ class io_controller(object):
     # handle actual io
     # output right now is print to standard out
     def io_loop(self):
+        # Leaving the OLED on for a long period of time can damage it
+        # Set these to prevent OLED burn in
+        self.DISPLAY_ON  = 2 # on time in seconds
+        self.DISPLAY_OFF = 58 # off time in seconds
+
+        # Create the I2C interface.
+        self.i2c = busio.I2C(SCL, SDA)
+
+        # Create the SSD1306 OLED class.
+        # The first two parameters are the pixel width and pixel height.  Change these
+        # to the right size for your display!
+        self.disp = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c)
+
+        # Clear display.
+        self.disp.fill(0)
+        self.disp.show()
+
+        # Create blank image for drawing.
+        # Make sure to create image with mode '1' for 1-bit color.
+        self.width = self.disp.width
+        self.height = self.disp.height
+        self.image = Image.new("1", (self.width, self.height))
+
+        # Get drawing object to draw on image.
+        self.draw = ImageDraw.Draw(self.image)
+
+        # Draw a black filled box to clear the image.
+        self.draw.rectangle((0, 0, width, height), outline=0, fill=0)
+
+        # Draw some shapes.
+        # First define some constants to allow easy resizing of shapes.
+        self.padding = -2
+        self.top = self.padding
+        self.bottom = self.height - self.padding
+        # Move left to right keeping track of the current x position for drawing shapes.
+        self.x = 0
+
+
+        # Load default font.
+        self.font = ImageFont.load_default()
+
+        # Alternatively load a TTF font.  Make sure the .ttf font file is in the
+        # same directory as the python script!
+        # Some other nice fonts to try: http://www.dafont.com/bitmap.php
+        # font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 9)
         while True:
+
+            # Draw a black filled box to clear the image.
+            self.draw.rectangle((0, 0, self.width, self.height), self.outline=0, self.fill=0)
+
+            # Shell scripts for system monitoring from here:
+            # https://unix.stackexchange.com/questions/119126/command-to-display-memory-usage-disk-usage-and-cpu-load
+            self.cmd = "hostname -I | cut -d' ' -f1"
+            self.IP = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
+            self.cmd = 'cut -f 1 -d " " /proc/loadavg'
+            self.CPU = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
+            self.cmd = "free -m | awk 'NR==2{printf \"Mem: %s/%s MB  %.2f%%\", $3,$2,$3*100/$2 }'"
+            self.MemUsage = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
+            self.cmd = 'df -h | awk \'$NF=="/"{printf "Disk: %d/%d GB  %s", $3,$2,$5}\''
+            self.Disk = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
+
+            # Write four lines of text.
+
+            self.draw.text((self.x, self.top + 0), "GPS: " + self.wsc.gps_fix, font=self.font, fill=255)
+            self.draw.text((self.x, self.top + 8), "TS: " + self.wsc.timestamp, font=self.font, fill=255)
+            self.draw.text((self.x, self.top + 16), self.MemUsage, font=self.font, fill=255)
+            self.draw.text((self.x, self.top + 25), self.Disk, font=self.font, fill=255)
+
+            # Display image.
+            self.disp.image(self.image)
+            self.disp.show()
+            time.sleep(self.DISPLAY_ON)
+            self.disp.fill(0)
+            self.disp.show()
+            time.sleep(self.DISPLAY_OFF)
+
             print(f"Timestamp: {self.wsc.timestamp} GPS: {self.wsc.gps_fix}")
             msg_shown = 0
             # check for error state
@@ -115,11 +190,11 @@ class ws_connector(object):
     def parse_gps(self, msg_dict):
         gps_msg = msg_dict['GPS_LOCATION']['kismet.common.location.fix']
         if gps_msg == 3:
-            self.gps_fix = "GPS has 3d fix"
+            self.gps_fix = "3D fix"
         elif gps_msg == 2:
-            self.gps_fix = "GPS has 2d fix"
+            self.gps_fix = "2D fix"
         else:
-            self.gps_fix = "GPS not available"
+            self.gps_fix = "NO LOCK"
 
     # ws client callback for new messages
     def on_message(self, ws, message):
