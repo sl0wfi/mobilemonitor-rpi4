@@ -27,9 +27,9 @@ except Exception as e:
     print("Failed to load gpiozero python3 module. Installation is available from pip")
     sys.exit(1)
 try:
-    import websocket
+    import websockets
 except Exception as e:
-    print("Failed to load websocket python3 module. Installation is available: pip install websocket-client")
+    print("Failed to load websockets python3 module.")
     sys.exit(1)
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -261,6 +261,10 @@ class ws_connector(object):
                                 on_message=self.on_message,
                                 on_error=self.on_error,
                                 on_close=self.on_close)
+        self.ws.on_open = self.on_open
+        self.ws.on_message = self.on_message
+        self.ws.on_error = self.on_error
+        self.ws.on_close = self.on_close
         # use infinite loop to restart (avoids stack overflow from recursion in on_close cb)
         while True:
             self.ws.run_forever()
@@ -451,7 +455,7 @@ if __name__ == "__main__":
     if len(sys.argv) != 4:
         print(f"Usage: {sys.argv[0]} <Kismet address> <Kismet username> <Kismet password>")
         sys.exit(1)
-    #websocket.enableTrace(True)
+    websocket.enableTrace(True)
     wsc = ws_connector(sys.argv[1], sys.argv[2], sys.argv[3])
     io = io_controller(wsc)
     # create thread for websocket
