@@ -27,9 +27,9 @@ except Exception as e:
     print("Failed to load gpiozero python3 module. Installation is available from pip")
     sys.exit(1)
 try:
-    import websockets
+    import websocket
 except Exception as e:
-    print("Failed to load websockets python3 module.")
+    print("Failed to load websocket python3 module.")
     sys.exit(1)
 try:
     from PIL import Image, ImageDraw, ImageFont
