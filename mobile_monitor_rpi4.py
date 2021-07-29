@@ -1,11 +1,24 @@
 #This file written by sl0wfi
 #Many thanks to notaco as large chunks of this are from https://github.com/notaco/kismet_status_leds.py
 
+#Setup on kali as of July 2020
+#sudo apt-get install python3-pip
+#sudo pip3 install adafruit-circuitpython-ssd1306
+#pip3 install adafruit-blinka
+#sudo apt-get install python3-pil
+#sudo pip3 install psutil
+#sudo pip3 install requests
+#sudo pip3 install gpiozero
 #!/usr/bin/env python3
 # Import libraries
 
 
-import sys, json, time, threading, subprocess, psutil, busio, smbus, asyncio
+try:
+    import sys, json, time, threading, subprocess, psutil, busio, smbus, asyncio
+except Exception as e:
+    print("Failed to load some module, check that you have sys, json, time, threading, subprocess, psutil, busio, smbus, asyncio")
+    sys.exit(1)
+
 from queue import Queue
 from board import SCL, SDA
 #import multiprocessing
@@ -62,7 +75,7 @@ class io_controller(object):
         # Create the SSD1306 OLED class.
         # The first two parameters are the pixel width and pixel height.  Change these
         # to the right size for your display!
-        self.disp = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c)
+        self.disp = adafruit_ssd1306.SSD1306_I2C(128, 32, self.i2c)
 
         # Clear display.
         self.disp.fill(0)
@@ -78,7 +91,7 @@ class io_controller(object):
         self.draw = ImageDraw.Draw(self.image)
 
         # Draw a black filled box to clear the image.
-        self.draw.rectangle((0, 0, width, height), outline=0, fill=0)
+        self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
 
         # Draw some shapes.
         # First define some constants to allow easy resizing of shapes.
@@ -99,7 +112,7 @@ class io_controller(object):
         while True:
 
             # Draw a black filled box to clear the image.
-            self.draw.rectangle((0, 0, self.width, self.height), self.outline=0, self.fill=0)
+            self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
 
             # Shell scripts for system monitoring from here:
             # https://unix.stackexchange.com/questions/119126/command-to-display-memory-usage-disk-usage-and-cpu-load
@@ -115,7 +128,7 @@ class io_controller(object):
             # Write four lines of text.
 
             self.draw.text((self.x, self.top + 0), "GPS: " + self.wsc.gps_fix, font=self.font, fill=255)
-            self.draw.text((self.x, self.top + 8), "TS: " + self.wsc.timestamp, font=self.font, fill=255)
+            self.draw.text((self.x, self.top + 8), "TS: " + str(self.wsc.timestamp), font=self.font, fill=255)
             self.draw.text((self.x, self.top + 16), self.MemUsage, font=self.font, fill=255)
             self.draw.text((self.x, self.top + 25), self.Disk, font=self.font, fill=255)
 
