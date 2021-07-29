@@ -12,7 +12,6 @@
 #!/usr/bin/env python3
 # Import libraries
 
-
 try:
     import sys, json, time, threading, subprocess, psutil, busio, smbus, asyncio
 except Exception as e:
@@ -135,10 +134,10 @@ class io_controller(object):
             # Display image.
             self.disp.image(self.image)
             self.disp.show()
-            time.sleep(self.DISPLAY_ON)
-            self.disp.fill(0)
-            self.disp.show()
-            time.sleep(self.DISPLAY_OFF)
+            #time.sleep(self.DISPLAY_ON)
+            #self.disp.fill(0)
+            #self.disp.show()
+            #time.sleep(self.DISPLAY_OFF)
 
             print(f"Timestamp: {self.wsc.timestamp} GPS: {self.wsc.gps_fix}")
             msg_shown = 0
@@ -255,6 +254,7 @@ class ws_connector(object):
 
     # method to run ws client
     def ws_run(self):
+        print("Starting websocket connection")
         self.ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(self.kismetIP,self.kismetUN,self.kismetPW),
                                 on_open=self.on_open,
                                 on_message=self.on_message,
