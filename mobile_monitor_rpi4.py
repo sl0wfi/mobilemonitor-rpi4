@@ -453,10 +453,13 @@ if __name__ == "__main__":
     wsc = ws_connector(sys.argv[1], sys.argv[2], sys.argv[3])
     io = io_controller(wsc)
     # create thread for websocket
+    print("About to make ws thread")
     ws_thread = threading.Thread(target=wsc.ws_run)
+    print("About to START ws thread")
     ws_thread.start()
     try:
         # run io in main thread
+        print("About to START io thread")
         io.io_loop()
     except KeyboardInterrupt:
         # shutdown thread
