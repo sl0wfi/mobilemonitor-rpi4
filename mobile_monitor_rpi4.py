@@ -367,7 +367,6 @@ def rgb_control(rgb_color):
     #bus.write_byte_data(addr, 0x02, 0x00)
     #bus.write_byte_data(addr, 0x03, 0xFF)
 
-
 #This will control the OLED display.
 #Currently displays system stats, should be modified to show more relivant information
 def oled_display():
