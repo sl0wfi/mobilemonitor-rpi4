@@ -243,7 +243,7 @@ class ws_connector(object):
 
         # put connect message on queue
         self.msgs.put({'text': "Connected to kismet at {}".format(self.kismetIP), 'ts': self.timestamp})
-
+        print("Connected to websocket, subscribing")
         # send eventbus subscribes
         time.sleep(1)
         ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
