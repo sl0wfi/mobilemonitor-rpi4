@@ -237,13 +237,12 @@ class ws_connector(object):
 
     # ws client callback for opened connection
     def on_open(self, ws):
+        print("Connected to websocket, subscribing")
         # clear error state and error message
         self.error_state = 0
         self.error_msg = ''
-
         # put connect message on queue
         self.msgs.put({'text': "Connected to kismet at {}".format(self.kismetIP), 'ts': self.timestamp})
-        print("Connected to websocket, subscribing")
         # send eventbus subscribes
         time.sleep(1)
         ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
