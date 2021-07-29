@@ -224,11 +224,13 @@ class ws_connector(object):
     # this has not been tested and not sure it is being handled correctly
     def on_error(self, ws, error):
         # signal error state and provide an error message
+        print(error)
         self.error_state = 1
         self.error_msg = type(error).__name__
 
     # ws client callback for closed connection
     def on_close(self, ws, close_status_code, close_msg):
+        print("### closed ###")
         # reset status variables
         self.reset_status()
         # signal error state and provide a hopeful error message
