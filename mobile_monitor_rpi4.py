@@ -265,6 +265,7 @@ class ws_connector(object):
             self.ws.run_forever()
             if self.reconnect:
                 time.sleep(3)
+                print("Reconnect loop")
             else:
                 break
 #####
