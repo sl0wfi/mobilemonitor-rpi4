@@ -1,0 +1,51 @@
+{
+    "kismet_httpd": {
+        "username": "kismet",
+        "password": "PASSWORD",
+        "address": "localhost",
+        "port": "2501",
+        "uri_prefix": "",
+        "reconnect": true,
+        "reconnect_delay": 3
+    },
+    "local_process_management": {
+        "enabled": true,
+        "kismet_server": true
+    },
+    "local_gpio": {
+        "enabled": true,
+        "use_gpiozero": true,
+        "input_buttons": [
+            {
+            "function": "show_stats",
+            "gpio_pin": 26
+            }
+        ],
+        "leds": [
+            {
+            "function": "new_ssid",
+            "gpio_pin": 23
+            },
+            {
+            "function": "new_ap",
+            "gpio_pin": 24
+            },
+            {
+            "function": "new_client",
+            "gpio_pin": 25
+            },
+            {
+            "function": "gps_status",
+            "gpio_pin": 12
+            }
+        ]
+    },
+    "i2c_display": {
+        "enabled": true,
+        "driver": "adafruit_ssd1306",
+        "width": 128,
+        "height": 32
+    },
+    "data_to_stdout": true,
+    "debug": false
+}

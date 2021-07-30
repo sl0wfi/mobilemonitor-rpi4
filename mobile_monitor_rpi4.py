@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 #This file written by sl0wfi
 #Many thanks to notaco as large chunks of this are from https://github.com/notaco/kismet_status_leds.py
 
@@ -9,164 +11,221 @@
 #sudo pip3 install psutil
 #sudo pip3 install requests
 #sudo pip3 install gpiozero
-#!/usr/bin/env python3
+
 # Import libraries
 
-try:
-    import sys, json, time, threading, subprocess, psutil, busio, smbus, asyncio
-except Exception as e:
-    print("Failed to load some module, check that you have sys, json, time, threading, subprocess, psutil, busio, smbus, asyncio")
-    sys.exit(1)
-
+# import for modules that are standard to python3
+import argparse, os, sys, json, traceback, time, threading, subprocess
 from queue import Queue
-from board import SCL, SDA
-#import multiprocessing
-try:
-    from gpiozero import LED, Button
-except Exception as e:
-    print("Failed to load gpiozero python3 module. Installation is available from pip")
-    sys.exit(1)
+
+# import websocket-client
 try:
     import websocket
-except Exception as e:
-    print("Failed to load websocket python3 module.")
-    sys.exit(1)
-try:
-    from PIL import Image, ImageDraw, ImageFont
-except Exception as e:
-    print("Failed to load PIL python3 module. installation is available from pip3")
-    sys.exit(1)
-try:
-    import adafruit_ssd1306
-except Exception as e:
-    print("Failed to load adafruit_ssd1306 python3 module. installation is available from pip3")
+except:
+    print("Failed to load websocket python3 module. Install using 'pip3 install websocket-client'")
     sys.exit(1)
 
-# class for io loop
-class io_controller(object):
-    # init with configuration
-    def __init__(self, ws_connector, screen_update_delay=3, msg_screen_time=1, msg_timeout=10):
-        self.buzzer = 18
-        self.led_SSID = LED(23)
-        self.led_AP = LED(24)
-        self.led_client = LED(25)
-        self.led_GPS = LED(12)
-        # reference to ws_connector instance to read status from
-        self.wsc = ws_connector
-        # delay to status updates in seconds
-        self.loop_delay = screen_update_delay
-        # delay to show messages
-        self.msg_delay = msg_screen_time
-        # manage queue by limiting how old the shown messages can be
-        self.msg_max_time_diff = msg_timeout
+# configuration class
+class configuration(object):
+    def __init__(self):
+            # set up and run argument parser
+            self.parser = argparse.ArgumentParser(description="{}, a mobile wireless monitoring platform".format(sys.argv[0]))
+            self.parser.add_argument('-c',"--config", action="store", dest="config_file",
+                                            default="config.json", help="json config file, default config.json")
+            self.parser.add_argument('-k','--kismet-host', action="store", dest="host", help="remote Kismet server on host:port")
+            self.parser.add_argument('-u',"--user", action="store", dest="user", help="Kismet username for websocket eventbus")
+            self.parser.add_argument('-p',"--password", action="store", dest="password", help="Kismet password for websocket eventbus")
+            self.parser.add_argument("--uri-prefix", action="store", dest="uri_prefix", help="Kismet httpd uri prefix")
+            self.parser.add_argument("--disable-reconnect", action="store_true", dest="no_reconnect", help="disable websocket reconnect")
+            self.parser.add_argument("--reconnect-delay", action="store", type=int, dest="reconnect_delay", help="websocket reconnect delay (seconds)")
+            self.parser.add_argument("--disable-lpm", action="store_true", dest="no_lpm", help="disable all local process management")
+            self.parser.add_argument("--disable-gpio", action="store_true", dest="no_gpio", help="disable all gpio usage")
+            self.parser.add_argument("--disable-gpio-buttons", action="store_true", dest="no_buttons", help="disable gpio button usage")
+            self.parser.add_argument("--disable-gpio-leds", action="store_true", dest="no_leds", help="disable gpio led usage")
+            self.parser.add_argument("--disable-i2c-display", action="store_true", dest="no_i2c", help="disable i2c display")
+            self.parser.add_argument("--disable-stdout-data", action="store_true", dest="no_stdout", help="disable writing data to stdout")
+            self.parser.add_argument("--debug", action="store_true", dest="debug", help="enable debug messages")
+            cmd_args = self.parser.parse_args()
 
-    # handle actual io
-    # output right now is print to standard out
-    def io_loop(self):
-        # Leaving the OLED on for a long period of time can damage it
-        # Set these to prevent OLED burn in
-        self.DISPLAY_ON  = 2 # on time in seconds
-        self.DISPLAY_OFF = 58 # off time in seconds
+            # read configuration file
+            self.config_file = cmd_args.config_file
+            if not os.path.isfile(os.path.expanduser(self.config_file)):
+                print("configuration file {} not found!".format(self.config_file))
+                sys.exit(1)
+            elif not os.access(os.path.expanduser(self.config_file), os.R_OK):
+                print("configuration file {} not readable!".format(self.config_file))
+                sys.exit(1)
+            try:
+                with open(os.path.expanduser(self.config_file), "r") as json_file:
+                    conf_data = json.load(json_file)
+            except Exception as err:
+                print(err)
+                print("Error parsing json config file {}".format(self.config_file))
+                sys.exit(1)
 
-        # Create the I2C interface.
-        self.i2c = busio.I2C(SCL, SDA)
+            # check for debugging
+            if cmd_args.debug or conf_data['debug'] == True:
+                self.debug = True
+            else:
+                self.debug = False
 
-        # Create the SSD1306 OLED class.
-        # The first two parameters are the pixel width and pixel height.  Change these
-        # to the right size for your display!
-        self.disp = adafruit_ssd1306.SSD1306_I2C(128, 32, self.i2c)
+            # dump configs for debug
+            if self.debug:
+                print("DEBUG config init: conf_data from {}".format(self.config_file))
+                print(json.dumps(conf_data, indent=4, sort_keys=True))
+                print("DEBUG config init: cmd_args from argparse (taking precedence")
+                print(cmd_args)
 
-        # Clear display.
-        self.disp.fill(0)
-        self.disp.show()
+            # ensure there is a user and password
+            if cmd_args.user != None:
+                self.username = cmd_args.user
+            else:
+                try: self.username = conf_data['kismet_httpd']['username']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("ERROR: Failed to find configuration for kismet httpd username!")
+                    sys.exit(1)
 
-        # Create blank image for drawing.
-        # Make sure to create image with mode '1' for 1-bit color.
-        self.width = self.disp.width
-        self.height = self.disp.height
-        self.image = Image.new("1", (self.width, self.height))
+            if cmd_args.password != None:
+                self.password = cmd_args.password
+            else:
+                try: self.password = conf_data['kismet_httpd']['password']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("ERROR: Failed to find configuration for kismet httpd password!")
+                    sys.exit(1)
 
-        # Get drawing object to draw on image.
-        self.draw = ImageDraw.Draw(self.image)
+            # check the rest of arguments and config file, warn and default as needed
+            if cmd_args.host != None:
+                eq = cmd_args.host.find(":")
+                if eq == -1:
+                    print("ERROR: bad kismet host argument, expected host:port for websocket connection.")
+                    sys.exit(1)
 
-        # Draw a black filled box to clear the image.
-        self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
+                self.address = cmd_args.host[:eq]
+                self.port = int(cmd_args.host[eq+1:])
+            else:
+                try: self.address = conf_data['kismet_httpd']['address']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for kismet httpd server address!")
+                    print("Setting to 'localhost'")
+                    self.address = 'localhost'
+                try: self.port = conf_data['kismet_httpd']['port']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for kismet httpd server port!")
+                    print("Setting to 2501")
+                    self.port = '2501'
 
-        # Draw some shapes.
-        # First define some constants to allow easy resizing of shapes.
-        self.padding = -2
-        self.top = self.padding
-        self.bottom = self.height - self.padding
-        # Move left to right keeping track of the current x position for drawing shapes.
-        self.x = 0
+            if cmd_args.uri_prefix != None:
+                self.uri_prefix = cmd_args.uri_prefix
+            else:
+                try: self.uri_prefix = conf_data['kismet_httpd']['uri_prefix']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for kismet httpd uri prefix!")
+                    print("Setting to ''")
+                    self.uri_prefix = ''
 
+            if cmd_args.no_reconnect:
+                self.enable_reconnect = False
+            else:
+                try: self.reconnect = conf_data['kismet_httpd']['reconnect']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for kismet httpd reconnect!")
+                    print("Setting to True")
+                    self.reconnect = True
 
-        # Load default font.
-        self.font = ImageFont.load_default()
+            if cmd_args.reconnect_delay != None:
+                self.reconnect_delay = cmd_args.reconnect_delay
+            else:
+                try: self.reconnect_delay = conf_data['kismet_httpd']['reconnect_delay']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for kismet httpd reconnect delay!")
+                    print("Setting to 3")
+                    self.reconnect_delay = 3
 
-        # Alternatively load a TTF font.  Make sure the .ttf font file is in the
-        # same directory as the python script!
-        # Some other nice fonts to try: http://www.dafont.com/bitmap.php
-        # font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 9)
-        while True:
+            if cmd_args.no_lpm:
+                self.local_process_management = { "enabled": False }
+            else:
+                try: self.local_process_management = conf_data['local_process_management']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for local process management!")
+                    print("Disabling.")
+                    self.local_process_management = { "enabled": False }
 
-            # Draw a black filled box to clear the image.
-            self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
+            if cmd_args.no_gpio:
+                self.local_gpio = { "enabled": False }
+            else:
+                try: self.local_gpio = conf_data['local_gpio']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for local gpio!")
+                    print("Disabling.")
+                    self.local_gpio = { "enabled": False }
 
-            # Shell scripts for system monitoring from here:
-            # https://unix.stackexchange.com/questions/119126/command-to-display-memory-usage-disk-usage-and-cpu-load
-            self.cmd = "hostname -I | cut -d' ' -f1"
-            self.IP = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
-            self.cmd = 'cut -f 1 -d " " /proc/loadavg'
-            self.CPU = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
-            self.cmd = "free -m | awk 'NR==2{printf \"Mem: %s/%s MB  %.2f%%\", $3,$2,$3*100/$2 }'"
-            self.MemUsage = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
-            self.cmd = 'df -h | awk \'$NF=="/"{printf "Disk: %d/%d GB  %s", $3,$2,$5}\''
-            self.Disk = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
+            if cmd_args.no_buttons:
+                self.local_gpio['input_buttons'] = []
 
-            # Write four lines of text.
+            if cmd_args.no_leds:
+                self.local_gpio['leds'] = []
 
-            self.draw.text((self.x, self.top + 0), "GPS: " + self.wsc.gps_fix, font=self.font, fill=255)
-            self.draw.text((self.x, self.top + 8), "TS: " + str(self.wsc.timestamp), font=self.font, fill=255)
-            self.draw.text((self.x, self.top + 16), self.MemUsage, font=self.font, fill=255)
-            self.draw.text((self.x, self.top + 25), self.Disk, font=self.font, fill=255)
+            if cmd_args.no_i2c:
+                self.i2c_display = { "enabled": False }
+            else:
+                try: self.i2c_display = conf_data['i2c_display']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for i2c_display!")
+                    print("Disabling.")
+                    self.i2c_display = { "enabled": False }
 
-            # Display image.
-            self.disp.image(self.image)
-            self.disp.show()
-            #time.sleep(self.DISPLAY_ON)
-            #self.disp.fill(0)
-            #self.disp.show()
-            #time.sleep(self.DISPLAY_OFF)
+            if cmd_args.no_stdout:
+                self.data_to_stdout = { "enabled": False }
+            else:
+                try: self.data_to_stdout = conf_data['data_to_stdout']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for data_to_stdout!")
+                    print("Enabling.")
+                    self.data_to_stdout = { "enabled": True }
 
-            print(f"Timestamp: {self.wsc.timestamp} GPS: {self.wsc.gps_fix}")
-            msg_shown = 0
-            # check for error state
-            if self.wsc.error_state > 0:
-                print(self.wsc.error_msg)
-            # check queue for messages
-            elif not wsc.msgs.empty():
-                while not wsc.msgs.empty():
-                    # get message off queue
-                    disp_msg = wsc.msgs.get()
-                    # check the message timestamp
-                    if disp_msg['ts'] == -1 or (self.wsc.timestamp - disp_msg['ts']) <= self.msg_max_time_diff:
-                        print(disp_msg['text'])
-                    time.sleep(self.msg_delay)
-                    msg_shown = msg_shown + 1
-                    # bail if showing another message with delay status update
-                    if (msg_shown + 1) * self.msg_delay > self.loop_delay:
-                        break
-            time.sleep(self.loop_delay - (msg_shown * self.msg_delay))
-
+# class for handling the websocket connection
 class ws_connector(object):
     # init the variables for the class
-    def __init__(self, addr, un, pw):
-        self.kismetIP = addr
-        self.kismetUN = un
-        self.kismetPW = pw
-        self.reconnect = True
-        self.reconnect_delay = 3
+    def __init__(self, addr, port, un, pw, **kwargs):
+        self.kismet_address = addr
+        self.kismet_port = port
+        self.kismet_user = un
+        self.kismet_pass = pw
+
+        if 'reconnect' in kwargs.keys():
+            self.reconnect = kwargs['reconnect']
+        else:
+            self.reconnect = True
+        if 'reconnect_delay' in kwargs.keys():
+            self.reconnect_delay = kwargs['reconnect_delay']
+        else:
+            self.reconnect_delay = 3
+        if 'debug' in kwargs.keys():
+            self.debug = kwargs['debug']
+        else:
+            self.debug = False
 
         # create thread safe queue
         self.msgs = Queue()
@@ -244,7 +303,7 @@ class ws_connector(object):
         self.error_state = 0
         self.error_msg = ''
         # put connect message on queue
-        self.msgs.put({'text': "Connected to kismet at {}".format(self.kismetIP), 'ts': self.timestamp})
+        self.msgs.put({'text': "Connected to kismet at {}".format(self.kismet_address), 'ts': self.timestamp})
         # send eventbus subscribes
         time.sleep(1)
         ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
@@ -256,15 +315,11 @@ class ws_connector(object):
     # method to run ws client
     def ws_run(self):
         print("Starting websocket connection")
-        self.ws = websocket.WebSocketApp("ws://{}:2501/eventbus/events.ws?user={}&password={}".format(self.kismetIP,self.kismetUN,self.kismetPW),
+        self.ws = websocket.WebSocketApp("ws://{}:{}/eventbus/events.ws?user={}&password={}".format(self.kismet_address,self.kismet_port,self.kismet_user,self.kismet_pass),
                                 on_open= lambda ws: self.on_open(self.ws),
                                 on_message= lambda ws,msg: self.on_message(self.ws, msg),
                                 on_error= lambda ws,msg: self.on_error(self.ws, msg),
                                 on_close= lambda ws: self.on_close(self.ws, self.close_status_code, self.close_msg))
-        #self.ws.on_open = self.on_open
-        #self.ws.on_message = self.on_message
-        #self.ws.on_error = self.on_error
-        #self.ws.on_close = self.on_close
         # use infinite loop to restart (avoids stack overflow from recursion in on_close cb)
         while True:
             self.ws.run_forever()
@@ -273,12 +328,168 @@ class ws_connector(object):
                 print("Reconnect loop")
             else:
                 break
+
+# class for gpio io_controller
+class gpio_controller(object):
+    def __init__(self, btns, leds):
+        self.button_lines = {'show_stats': None}
+        for btn in btns:
+            try:
+                if btn['function'] == 'show_stats':
+                    self.button_lines['show_stats'] = btn['gpio_pin']
+            except:
+                print("Failed to configure 'input_buttons' entry in 'local_gpio':")
+                print(btn)
+        self.buttons = {}
+
+        self.led_lines = {'new_ssid': None,
+                          'new_ap': None,
+                          'new_client': None,
+                          'gps_status': None}
+        for led in leds:
+            try:
+                if led['function'] == 'new_ssid':
+                    self.led_lines['new_ssid'] = led['gpio_pin']
+                elif led['function'] == 'new_ap':
+                    self.led_lines['new_ap'] = led['gpio_pin']
+                elif led['function'] == 'new_ssid':
+                    self.led_lines['new_client'] = led['gpio_pin']
+                elif led['function'] == 'new_client':
+                    self.led_lines['gps_status'] = led['gps_status']
+            except:
+                print("Failed to configure 'leds' entry in 'local_gpio':")
+                print(led)
+        self.leds = {}
+
+    def button_watcher(self, gpio_line, cb):
+        self.buttons['line_'+str(gpio_line)] = Button(gpio_line)
+        self.buttons['line_'+str(gpio_line)].when_pressed = cb
+
+# class for display drawing and updating
+class i2c_controller(object):
+    def __init__(self, width, height):
+        # Create the I2C interface.
+        self.i2c = busio.I2C(SCL, SDA)
+
+        # no other drivers yet so use ssd1306
+        # Create the SSD1306 OLED class
+        self.disp = adafruit_ssd1306.SSD1306_I2C(width, height, self.i2c)
+
+        # Clear display.
+        self.disp.fill(0)
+        self.disp.show()
+
+        # Create blank image for drawing.
+        # Make sure to create image with mode '1' for 1-bit color.
+        self.width = self.disp.width
+        self.height = self.disp.height
+        self.image = Image.new("1", (self.width, self.height))
+
+        # Get drawing object to draw on image.
+        self.draw = ImageDraw.Draw(self.image)
+
+        # Draw a black filled box to clear the image.
+        self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
+
+        # Draw some shapes.
+        # First define some constants to allow easy resizing of shapes.
+        self.padding = -2
+        self.top = self.padding
+        self.bottom = self.height - self.padding
+        # Move left to right keeping track of the current x position for drawing shapes.
+        self.x = 0
+
+        # Load default font.
+        self.font = ImageFont.load_default()
+
+    def draw_screen(self, timestamp, gps_fix):
+        # Draw a black filled box to clear the image.
+        self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
+
+        # Shell scripts for system monitoring from here:
+        # https://unix.stackexchange.com/questions/119126/command-to-display-memory-usage-disk-usage-and-cpu-load
+        #self.cmd = "hostname -I | cut -d' ' -f1"
+        #self.IP = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
+        #self.cmd = 'cut -f 1 -d " " /proc/loadavg'
+        #self.CPU = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
+        self.cmd = "free -m | awk 'NR==2{printf \"Mem: %s/%s MB  %.2f%%\", $3,$2,$3*100/$2 }'"
+        self.MemUsage = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
+        self.cmd = 'df -h | awk \'$NF=="/"{printf "Disk: %d/%d GB  %s", $3,$2,$5}\''
+        self.Disk = subprocess.check_output(self.cmd, shell=True).decode("utf-8")
+
+        # Write four lines of text.
+        self.draw.text((self.x, self.top + 0), "GPS: " + gps_fix, font=self.font, fill=255)
+        self.draw.text((self.x, self.top + 8), "TS: " + str(timestamp), font=self.font, fill=255)
+        self.draw.text((self.x, self.top + 16), self.MemUsage, font=self.font, fill=255)
+        self.draw.text((self.x, self.top + 25), self.Disk, font=self.font, fill=255)
+
+        # Display image.
+        self.disp.image(self.image)
+        self.disp.show()
+        #time.sleep(self.DISPLAY_ON)
+        #self.disp.fill(0)
+        #self.disp.show()
+        #time.sleep(self.DISPLAY_OFF)
+
+# class for io loop
+class io_controller(object):
+    # init with configuration
+    def __init__(self, ws_connector, gpio=None, disp=None, show_stdout=True,
+                    screen_update_delay=3, msg_screen_time=1, msg_timeout=10):
+        # reference to ws_connector instance to read status from
+        self.wsc = ws_connector
+        # reference to gpio_controller
+        self.gpio_con = gpio
+        # reference to i2c_display instance to output data
+        self.i2c_disp = disp
+        # setting for prints
+        self.print_data = show_stdout
+        # delay to status updates in seconds
+        self.loop_delay = screen_update_delay
+        # delay to show messages
+        self.msg_delay = msg_screen_time
+        # manage queue by limiting how old the shown messages can be
+        self.msg_max_time_diff = msg_timeout
+
+    # callback for show_stats button
+    def show_stats_cb(self):
+        if self.print_data:
+            print("Show stats callback!")
+
+    # main io loop
+    def io_loop(self):
+        for action in self.gpio_con.button_lines.keys():
+            if self.gpio_con.button_lines[action] != None:
+                if action == 'show_stats':
+                    self.gpio_con.button_watcher(self.gpio_con.button_lines[action], self.show_stats_cb)
+        while True:
+            if self.print_data:
+                print(f"Timestamp: {self.wsc.timestamp} GPS: {self.wsc.gps_fix}")
+            if self.i2c_disp != None:
+                self.i2c_disp(self.wsc.timestamp, self.wsc.gps_fix)
+            msg_shown = 0
+            # check for error state
+            if self.wsc.error_state > 0:
+                print(self.wsc.error_msg)
+            # check queue for messages
+            elif not wsc.msgs.empty():
+                while not wsc.msgs.empty():
+                    # get message off queue
+                    disp_msg = wsc.msgs.get()
+                    # check the message timestamp
+                    if disp_msg['ts'] == -1 or (self.wsc.timestamp - disp_msg['ts']) <= self.msg_max_time_diff:
+                        if self.print_data:
+                            print(disp_msg['text'])
+                    time.sleep(self.msg_delay)
+                    msg_shown = msg_shown + 1
+                    # bail if showing another message with delay status update
+                    if (msg_shown + 1) * self.msg_delay > self.loop_delay:
+                        break
+            time.sleep(self.loop_delay - (msg_shown * self.msg_delay))
+
 #####
 #####
 ##### Start OLD CODE
-
-
-
 #Look for GPIO input
 def input_watch(timeout):
     while True:
@@ -312,7 +523,6 @@ def find_process(processName):
     return listOfProcessObjects;
 
 def rgb_control(rgb_color):
-
     bus = smbus.SMBus(1)
     addr = 0x0d
     rgb_off_reg = 0x07
@@ -451,20 +661,101 @@ def oled_display():
 ##### End OLD CODE
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print(f"Usage: {sys.argv[0]} <Kismet address> <Kismet username> <Kismet password>")
-        sys.exit(1)
-    websocket.enableTrace(True)
-    wsc = ws_connector(sys.argv[1], sys.argv[2], sys.argv[3])
-    io = io_controller(wsc)
+    # load config
+    config = configuration()
+
+    if config.debug:
+        print("Enabling trace on websocket-client")
+        websocket.enableTrace(True)
+    wsc = ws_connector(config.address, config.port, config.username, config.password,
+                       reconnect=config.reconnect, reconnect_delay=config.reconnect_delay, debug=config.debug)
+
+    if config.local_process_management['enabled']:
+        try:
+            import psutil
+        except:
+            print("Failed to load psutil python3 module, required for local process management")
+            sys.exit(1)
+        # handle process management
+
+    if config.local_gpio['enabled']:
+        if config.local_gpio['use_gpiozero']:
+            try:
+                from gpiozero import LED, Button
+            except:
+                print("Failed to load gpiozero python3 module. Installation is available from pip")
+                sys.exit(1)
+            try: config.local_gpio['input_buttons']
+            except:
+                print("ERROR: In configuration 'local_gpio' is enabled but 'input_buttons' is not defined!")
+                sys.exit(1)
+            try: config.local_gpio['leds']
+            except:
+                print("ERROR: In configuration 'local_gpio' is enabled but 'leds' is not defined!")
+                sys.exit(1)
+            gpio = gpio_controller(config.local_gpio['input_buttons'], config.local_gpio['leds'])
+        else:
+            print("ERROR: In configuration 'local_gpio' is enabled but 'use_gpiozero' is not True Currently no other gpio libraries are supported!")
+            print("Disabling local_gpio")
+            gpio = None
+    else:
+        gpio = None
+
+    if config.i2c_display['enabled']:
+        try:
+            import busio, smbus
+        except:
+            print("Failed to load busio and/or smbus python3 modules, required for i2c display")
+            sys.exit(1)
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except Exception as e:
+            print("Failed to load PIL python3 module, required for i2c display")
+            sys.exit(1)
+        try:
+            from board import SCL, SDA
+        except Exception as e:
+            print("Failed to load board python3 module, required for i2c display")
+            sys.exit(1)
+        if config.i2c_display['driver'] == 'adafruit_ssd1306':
+            try:
+                import adafruit_ssd1306
+            except Exception as e:
+                print("Failed to load adafruit_ssd1306 python3 module, required for i2c display driver")
+                sys.exit(1)
+        else:
+            print("Incorrect setting for i2c_display 'driver': '{}'".format(config.i2c_display['driver']))
+            print("Supported drivers are: 'adafruit_ssd1306'")
+            sys.exit(1)
+        if not 'width' in config.i2c_display.keys():
+            print("No i2c_display 'width' set.")
+            sys.exit(1)
+        if not 'height' in config.i2c_display.keys():
+            print("No i2c_display 'height' set.")
+            sys.exit(1)
+        try:
+            display = i2c_controller(config.i2c_display['width'], config.i2c_display['height'])
+        except:
+            traceback.print_tb(err.__traceback__)
+            print(err)
+            print("ERROR: Failed creating display for i2c_display!")
+            sys.exit(1)
+    else:
+        display = None
+
+    io = io_controller(wsc, gpio, display, show_stdout=config.data_to_stdout)
+
     # create thread for websocket
-    print("About to make ws thread")
+    if config.debug:
+        print("About to make ws thread")
     ws_thread = threading.Thread(target=wsc.ws_run)
-    print("About to START ws thread")
+    if config.debug:
+        print("About to START ws thread")
     ws_thread.start()
     try:
         # run io in main thread
-        print("About to START io thread")
+        if config.debug:
+            print("Running io loop in main thread")
         io.io_loop()
     except KeyboardInterrupt:
         # shutdown thread
