@@ -10,6 +10,8 @@ This project aims to creat a platform for war driving/biking/walking/boating...w
 
 ### **OUTPUT**
 
+The primary motivator for this project is to monitor system health and be able to attempt some corrective actions. The discovery notifications via LEDs are just fun blinkin' lights. 
+
 * Kismet status - Text on OLED, RGB LED
 * GPS Status - Text on OLED, RGB LED
 * Various Kismet discovery alerts - RGB LEDs, Buzzers, potentially haptics.
@@ -18,7 +20,7 @@ This project aims to creat a platform for war driving/biking/walking/boating...w
 
 ### **INPUT**
 
-Buttons via GPIO. This is a list of posibilites, platform may not have this many buttons
+Buttons via GPIO. This is a list of posibilites, platform may not have this many buttons. 
 * Safe system shut down
 * Shut down Kismet - Save battery in uninteresting areas
 * Restart Kismet for new run
