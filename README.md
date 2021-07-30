@@ -25,7 +25,6 @@ Buttons via GPIO. This is a list of posibilites, platform may not have this many
 * Network and USB reset without reboot
 * Note point of interest - Logs GPS location and time
 * Enable / Disable WiFi hotspot using Raspberry Pi onboard WiFi
-* 
 
 ### **Hardware**
 
@@ -38,6 +37,9 @@ The (planned) RGB LED ouput is based on WS2812 LEDs (like a NeoPixle). The syste
 Long term plan is to support other boards. This project is very new, but boards from Pine64 and Radxa are likely the first development targets after the Pi 4. 
 
 ### **Setup on kali as of July 2021**
+
+**NOTE: Kali does note have convenient way of enabling the I2C on the Pi4. You need to folow the procedure below to get the OLED screen working. 
+
 * #sudo apt-get install python3-pip
 * #sudo pip3 install websocket-client
 * #sudo pip3 install adafruit-circuitpython-ssd1306
@@ -46,8 +48,10 @@ Long term plan is to support other boards. This project is very new, but boards 
 * #sudo pip3 install requests
 * #sudo pip3 install gpiozero
 
+#### Configuring I2C Manually
+
 Source: https://github.com/fivdi/i2c-bus/blob/master/doc/raspberry-pi-i2c.md
-Configuring I2C Manually
+
 On older versions of Raspbian (prior to Raspbian Jessie 2015-11-21) the raspi-config tool can still be used to configure the I2C bus, but additional steps typically need to be performed.
 
 Step 1 - Enable I2C
