@@ -2,13 +2,13 @@
 A collection of tools to manage a mobile wireless monitoring platform. Monitors and manages state of hardware and software, accepts input via physical interaction and provides visual, auditory, and/or haptic output.
 
 
-###**This project is under development. And is likely to be broken at any moment.**
+### **This project is under development. And is likely to be broken at any moment.**
 
-##**Goals**
+## **Goals**
 
 This project aims to creat a platform for war driving/biking/walking/boating...whatever without the need for a screen and keyboard. The user may still connect to the (wonderful) Kismet web interface for more functionality. The list below is incomplete, as is the code. 
 
-###**OUTPUT**
+### **OUTPUT**
 
 * Kismet status - Text on OLED, RGB LED
 * GPS Status - Text on OLED, RGB LED
@@ -16,7 +16,7 @@ This project aims to creat a platform for war driving/biking/walking/boating...w
 * Number of discovered devices, SSIDs, etc (alternate status screen)
 * Interfaces currently used by Kismet (alternate status screen) 
 
-###**INPUT**
+### **INPUT**
 
 Buttons via GPIO. This is a list of posibilites, platform may not have this many buttons
 * Safe system shut down
@@ -27,7 +27,7 @@ Buttons via GPIO. This is a list of posibilites, platform may not have this many
 * Enable / Disable WiFi hotspot using Raspberry Pi onboard WiFi
 * 
 
-###**Hardware**
+### **Hardware**
 
 This is tested on a Raspberry Pi 4, 4GB. It will work on a 2GB model but you may see reduced performance in Kismet. Not tested on 8GB, but baring any add incompatibilies it should work. 
 
@@ -37,7 +37,7 @@ The (planned) RGB LED ouput is based on WS2812 LEDs (like a NeoPixle). The syste
 
 Long term plan is to support other boards. This project is very new, but boards from Pine64 and Radxa are likely the first development targets after the Pi 4. 
 
-###**Setup on kali as of July 2021**
+### **Setup on kali as of July 2021**
 * #sudo apt-get install python3-pip
 * #sudo pip3 install websocket-client
 * #sudo pip3 install adafruit-circuitpython-ssd1306
