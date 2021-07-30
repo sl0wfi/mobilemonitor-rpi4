@@ -45,7 +45,8 @@ Long term plan is to support other boards. This project is very new, but boards 
 * #sudo apt-get install python3-pip
 * #sudo pip3 install websocket-client
 * #sudo pip3 install adafruit-circuitpython-ssd1306
-* #sudo pip3 install adafruit-blinka
+* sudo pip3 install rpi_ws281x adafruit-circuitpython-neopixel
+* sudo python3 -m pip install --force-reinstall adafruit-blinka
 * #sudo pip3 install psutil
 * #sudo pip3 install requests
 * #sudo pip3 install gpiozero
