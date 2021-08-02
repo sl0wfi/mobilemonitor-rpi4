@@ -15,7 +15,7 @@
 # Import libraries
 
 # import for modules that are standard to python3
-import argparse, os, sys, json, traceback, time, threading, subprocess
+import argparse, os, sys, json, traceback, time, asyncio, threading, subprocess
 from queue import Queue
 
 # import websocket-client
@@ -43,8 +43,9 @@ class configuration(object):
             self.parser.add_argument("--disable-gpio-buttons", action="store_true", dest="no_buttons", help="disable gpio button usage")
             self.parser.add_argument("--disable-gpio-leds", action="store_true", dest="no_leds", help="disable gpio led usage")
             self.parser.add_argument("--disable-i2c-display", action="store_true", dest="no_i2c", help="disable i2c display")
-            self.parser.add_argument("--disable-stdout-data", action="store_true", dest="no_stdout", help="disable writing data to stdout")
+            self.parser.add_argument("--disable-stdout-msg", action="store_true", dest="no_stdout", help="disable writing messages to stdout")
             self.parser.add_argument("--debug", action="store_true", dest="debug", help="enable debug messages")
+            self.parser.add_argument("--debug-ws", action="store_true", dest="debug_ws", help="enable websocket debug messages")
             cmd_args = self.parser.parse_args()
 
             # read configuration file
@@ -73,7 +74,7 @@ class configuration(object):
             if self.debug:
                 print("DEBUG config init: conf_data from {}".format(self.config_file))
                 print(json.dumps(conf_data, indent=4, sort_keys=True))
-                print("DEBUG config init: cmd_args from argparse (taking precedence")
+                print("DEBUG config init: cmd_args from argparse (taking precedence)")
                 print(cmd_args)
 
             # ensure there is a user and password
@@ -195,15 +196,40 @@ class configuration(object):
                     self.i2c_display = { "enabled": False }
 
             if cmd_args.no_stdout:
-                self.data_to_stdout = { "enabled": False }
+                self.data_to_stdout = False
             else:
-                try: self.data_to_stdout = conf_data['data_to_stdout']
+                try: self.data_to_stdout = conf_data['msg_to_stdout']
                 except Exception as err:
                     traceback.print_tb(err.__traceback__)
                     print(err)
-                    print("Unable to find configuration for data_to_stdout!")
+                    print("Unable to find configuration for msg_to_stdout!")
                     print("Enabling.")
-                    self.data_to_stdout = { "enabled": True }
+                    self.data_to_stdout = True
+
+            if cmd_args.debug_ws:
+                self.debug_ws = True
+            else:
+                try: self.debug_ws = conf_data['debug_ws']
+                except Exception as err:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                    print("Unable to find configuration for debug_ws!")
+                    print("Disabling.")
+                    self.data_to_stdout = False
+
+# class for event defs and control
+class event_control(object):
+    def __init__(self):
+        self.ws_event = { 'ws_connected': [],
+                          'gps_status': [],
+                          'new_ssid': [],
+                          'new_ap': [],
+                          'new_device': [] }
+
+    def wsc_new(self, event):
+        if config.debug: print("Websocket event: " + str(event))
+        for cb in self.ws_event[event['type']]:
+            eventloop.call_soon(cb, event, False)
 
 # class for handling the websocket connection
 class ws_connector(object):
@@ -229,6 +255,7 @@ class ws_connector(object):
 
         # create thread safe queue
         self.msgs = Queue()
+
         # rest of variables are only read from main thread
         self.reset_status(True)
 
@@ -249,23 +276,36 @@ class ws_connector(object):
         msg_str = msg_dict['MESSAGE']['kismet.messagebus.message_string']
 
         io_msg = None
+        io_ev = None
         if "SSID" in msg_str:
             io_msg = "Found new SSID"
+            io_ev = "new_ssid"
         if "new 802.11 Wi-Fi access point" in msg_str:
             io_msg = "Found new access point"
+            io_ev = "new_ap"
+        if "new 802.11 Wi-Fi device" in msg_str:
+            io_msg = "Found new device"
+            io_ev = "new_device"
         # see if we have a message for io, put on queue
         if not io_msg is None:
             self.msgs.put({'text': io_msg, 'ts': self.timestamp})
+            eventloop.call_soon_threadsafe(events.wsc_new, {'type': io_ev, 'ts': self.timestamp})
 
     # parse eventbus message to create message for io display
     def parse_gps(self, msg_dict):
         gps_msg = msg_dict['GPS_LOCATION']['kismet.common.location.fix']
         if gps_msg == 3:
-            self.gps_fix = "3D fix"
+            if self.gps_fix != "3D fix":
+                self.gps_fix = "3D fix"
+                eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'gps_status', 'state': 2})
         elif gps_msg == 2:
-            self.gps_fix = "2D fix"
+            if self.gps_fix != "2D fix":
+                self.gps_fix = "2D fix"
+                eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'gps_status', 'state': 1})
         else:
-            self.gps_fix = "NO LOCK"
+            if self.gps_fix != "NO LOCK":
+                self.gps_fix = "NO LOCK"
+                eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'gps_status', 'state': 0})
 
     # ws client callback for new messages
     def on_message(self, ws, message):
@@ -279,9 +319,8 @@ class ws_connector(object):
                 self.parse_gps(deser_msg)
 
     # ws client callback for error
-    # i assume this is a protocol error of some sort (meaning ws is still connected)
-    # this has not been tested and not sure it is being handled correctly
     def on_error(self, ws, error):
+        self.reset_status()
         # signal error state and provide an error message
         print(error)
         self.error_state = 1
@@ -289,7 +328,7 @@ class ws_connector(object):
 
     # ws client callback for closed connection
     def on_close(self, ws, close_status_code, close_msg):
-        print("### closed ###")
+        print("Websocket connection closed.")
         # reset status variables
         self.reset_status()
         # signal error state and provide a hopeful error message
@@ -311,9 +350,11 @@ class ws_connector(object):
         ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"}))
         time.sleep(1)
         ws.send(json.dumps({"SUBSCRIBE":"GPS_LOCATION"}))
+        eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'ws_connected', 'state': 2})
 
     # method to run ws client
     def ws_run(self):
+        eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'ws_connected', 'state': 0})
         print("Starting websocket connection")
         self.ws = websocket.WebSocketApp("ws://{}:{}/eventbus/events.ws?user={}&password={}".format(self.kismet_address,self.kismet_port,self.kismet_user,self.kismet_pass),
                                 on_open= lambda ws: self.on_open(self.ws),
@@ -323,43 +364,244 @@ class ws_connector(object):
         # use infinite loop to restart (avoids stack overflow from recursion in on_close cb)
         while True:
             self.ws.run_forever()
+            eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'ws_connected', 'state': 0})
+            eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'gps_status', 'state': 0})
             if self.reconnect:
-                time.sleep(3)
-                print("Reconnect loop")
+                time.sleep(self.reconnect_delay)
+                if config.debug: print("Reconnect loop")
             else:
                 break
 
 # class for gpio io_controller
 class gpio_controller(object):
-    def __init__(self, btns, leds):
+    def __init__(self):
+        print("Configuring local gpio.")
         self.button_lines = {'show_stats': None}
-        for btn in btns:
-            try:
-                if btn['function'] == 'show_stats':
-                    self.button_lines['show_stats'] = btn['gpio_pin']
-            except:
-                print("Failed to configure 'input_buttons' entry in 'local_gpio':")
-                print(btn)
         self.buttons = {}
 
-        self.led_lines = {'new_ssid': None,
-                          'new_ap': None,
-                          'new_client': None,
-                          'gps_status': None}
-        for led in leds:
-            try:
-                if led['function'] == 'new_ssid':
-                    self.led_lines['new_ssid'] = led['gpio_pin']
-                elif led['function'] == 'new_ap':
-                    self.led_lines['new_ap'] = led['gpio_pin']
-                elif led['function'] == 'new_ssid':
-                    self.led_lines['new_client'] = led['gpio_pin']
-                elif led['function'] == 'new_client':
-                    self.led_lines['gps_status'] = led['gps_status']
-            except:
-                print("Failed to configure 'leds' entry in 'local_gpio':")
-                print(led)
+        self.led_lines = {}
         self.leds = {}
+
+        self.np_pixels = {}
+        self.np_running = False
+
+    def configure_buttons(self, btns):
+        try:
+            for btn in btns['lines']:
+                try:
+                    if btn['function'] == 'show_stats':
+                        self.button_lines['show_stats'] = btn['gpio_pin']
+                except Exception as err:
+                    if config.debug:
+                        traceback.print_tb(err.__traceback__)
+                        print(err)
+                    print("Failed to configure 'lines' entry in 'input_buttons':")
+                    print(btn)
+        except Exception as err:
+            if config.debug:
+                traceback.print_tb(err.__traceback__)
+                print(err)
+            print("Failed to configure 'lines' in 'input_buttons'")
+
+    def configure_leds(self, leds, events):
+        ws_evt = events.ws_event
+        try:
+            if 'duration' in leds.keys():
+                self.led_duration = leds['duration']
+            else:
+                self.led_duration = 0.3
+                print(f"In configuration 'leds' is enabled but 'duration' is not defined. Defaulting to '{self.led_duration}'")
+            for led in leds['lines']:
+                pin = led['gpio_pin']
+                try:
+                    for ev in ws_evt.keys():
+                        if led['function'] == ev:
+                            self.led_lines[ev] = { 'pin': pin, 'state': 0 }
+                            ws_evt[ev].append(self.led_change)
+                            if not pin in self.leds.keys():
+                                self.leds[pin] = LED(pin)
+                except Exception as err:
+                    if config.debug:
+                        traceback.print_tb(err.__traceback__)
+                        print(err)
+                    print("Failed to configure 'lines' entry in 'leds':")
+                    print(led)
+        except Exception as err:
+            if config.debug:
+                traceback.print_tb(err.__traceback__)
+                print(err)
+            print("Failed to configure 'lines' in 'leds'")
+
+    def led_change(self, event, timed=False, set_on=True):
+        ev = event['type']
+        pin = self.led_lines[ev]['pin']
+        if config.debug: print("led_change: "+ev+" "+str(self.led_lines[ev]))
+
+        # handled stated events, 0 for off, 1 for flashing, 2, for on
+        if 'state' in event.keys():
+            # off/on being simple
+            if event['state'] == 0:
+                self.leds[pin].off()
+                self.led_lines[ev]['state'] = 0
+            elif event['state'] == 2:
+                self.leds[pin].on()
+                self.led_lines[ev]['state'] = 2
+            # flashing, timed callbacks with args to indicate where we are
+            elif event['state'] == 1:
+                # check for and localize the state, saves on ifs later
+                if 'state' in self.led_lines[ev].keys():
+                    pstate = self.led_lines[ev]['state']
+                else:
+                    pstate = 0
+                # new trigger coming from wsc
+                if not timed and pstate != 1:
+                    if pstate == 0:
+                        self.leds[pin].on()
+                    else:
+                        self.leds[pin].ff()
+                    self.led_lines[ev]['state'] = 1
+                    eventloop.call_later(self.led_duration, self.led_change, event, True, True)
+                # now just the timed callbacks
+                elif timed and pstate == 1:
+                    if set_on:
+                        self.leds[pin].on()
+                        eventloop.call_later(self.led_duration, self.led_change, event, True, False)
+                    if not set_on:
+                        self.leds[pin].off()
+                        eventloop.call_later(self.led_duration, self.led_change, event, True, True)
+                # handle some wtf's
+                elif timed and config.debug: print("led_change: 'timed' call with unexpected state: {}".format(event))
+            elif config.debug: print("led_change: Unexpected 'state' passed: {}".format(event['state']))
+        # now for events with a timestamp
+        elif 'ts' in event.keys():
+            if not timed:
+                if not 'ts' in self.led_lines[ev].keys() or event['ts'] > self.led_lines[ev]['ts']:
+                    self.led_lines[ev]['ts'] = event['ts']
+                    self.leds[pin].on()
+                    eventloop.call_later(self.led_duration, self.led_change, event, True, False)
+            else:
+                if self.led_lines[ev]['ts'] == event['ts']:
+                    self.leds[pin].off()
+        # and error for unhandled
+        elif config.debug: print("led_change: Unexpected 'event' passed: {}".format(event))
+
+    def configure_neopixel(self, neopixels, events):
+        ws_evt = events.ws_event
+        try:
+            np_pin = getattr(board, 'D'+str(neopixels['pin']))
+            if 'duration' in neopixels.keys():
+                self.np_duration = neopixels['duration']
+            else:
+                self.np_duration = 0.3
+                print(f"In configuration 'neopixels' is enabled but 'duration' is not defined. Defaulting to '{self.np_duration}'")
+            if 'count' in neopixels.keys():
+                cnt = neopixels['count']
+            else:
+                cnt = len(neopixels['pixels'])
+                print(f"In configuration 'neopixels' is enabled but 'count' is not defined. Using 'pixels' length: {cnt}")
+            if 'brightness' in neopixels.keys():
+                bright = neopixels['brightness']
+            else:
+                bright = 0.2
+                print(f"In configuration 'neopixels' is enabled but 'order' is not defined. Defaulting to '{bright}'")
+            if 'order' in neopixels.keys():
+                order = neopixels['order']
+            else:
+                if len(neopixels['pixels'][0]['color']) == 3:
+                    order = "GRB"
+                elif len(neopixels['pixels'][0]['color']) == 4:
+                    order = "GRBW"
+                else:
+                    raise Exception("Unexpected length of 'color' for first element in 'pixels', 3 or 4 bytes expected!")
+                print(f"In configuration 'neopixels' is enabled but 'order' is not defined. Defaulting to '{order}'")
+            self.pixels = neopixel.NeoPixel(np_pin, cnt, brightness=bright, pixel_order=order, auto_write=True)
+            try:
+                for i in range(len(neopixels['pixels'])):
+                    try:
+                        for ev in ws_evt.keys():
+                            if neopixels['pixels'][i]['function'] == ev:
+                                self.np_pixels[ev] = { 'place': i,
+                                                       'color': neopixels['pixels'][i]['color'] }
+                                # writing to the pixels mainly to ensure permissions
+                                self.pixels[i] = neopixels['pixels'][i]['color']
+                                time.sleep(.1)
+                                self.pixels[i] = [0] * len(neopixels['pixels'][i]['color'])
+                                ws_evt[ev].append(self.np_change)
+                    except Exception as err:
+                        if config.debug:
+                            traceback.print_tb(err.__traceback__)
+                            print(err)
+                        print("Failed to configure 'pixels' entry in 'neopixels':")
+                        print(np)
+            except Exception as err:
+                if config.debug:
+                    traceback.print_tb(err.__traceback__)
+                    print(err)
+                print("Failed to configure 'pixels' in 'neopixels'")
+
+            self.np_running = True
+        except Exception as err:
+            if config.debug:
+                traceback.print_tb(err.__traceback__)
+            print(err)
+            print("Failed to configure neopixels!")
+
+    def np_change(self, event, timed=False, set_color=True):
+        # localize some awkwardness for readablity
+        ev = event['type']
+        place = self.np_pixels[ev]['place']
+        color = self.np_pixels[ev]['color']
+        black = [0]*len(self.np_pixels[ev]['color'])
+        # debug msg
+        if config.debug: print("np_change: "+ev+" "+str(self.np_pixels[ev]))
+
+        # handled stated events, 0 for off, 1 for flashing, 2, for on
+        if 'state' in event.keys():
+            # off/on being simple
+            if event['state'] == 0:
+                self.pixels[place] = black
+                self.np_pixels[ev]['state'] = 0
+            elif event['state'] == 2:
+                self.pixels[place] = color
+                self.np_pixels[ev]['state'] = 2
+            # flashing, timed callbacks with args to indicate where we are
+            elif event['state'] == 1:
+                # check for and localize the state, saves on ifs later
+                if 'state' in self.np_pixels[ev].keys():
+                    pstate = self.np_pixels[ev]['state']
+                else:
+                    pstate = 0
+                # new trigger coming from wsc
+                if not timed and pstate != 1:
+                    if pstate == 0:
+                        self.pixels[place] = color
+                    else:
+                        self.pixels[place] = black
+                    self.np_pixels[ev]['state'] = 1
+                    eventloop.call_later(self.np_duration, self.np_change, event, True, True)
+                # now just the timed callbacks
+                elif timed and pstate == 1:
+                    if set_color:
+                        self.pixels[place] = color
+                        eventloop.call_later(self.np_duration, self.np_change, event, True, False)
+                    if not set_color:
+                        self.pixels[place] = black
+                        eventloop.call_later(self.np_duration, self.np_change, event, True, True)
+                # handle some wtf's
+                elif timed and config.debug: print("np_change: 'timed' call with unexpected state: {}".format(event))
+            elif config.debug: print("np_change: Unexpected 'state' passed: {}".format(event['state']))
+        # now for events with a timestamp
+        elif 'ts' in event.keys():
+            if not timed:
+                if not 'ts' in self.np_pixels[ev].keys() or event['ts'] > self.np_pixels[ev]['ts']:
+                    self.np_pixels[ev]['ts'] = event['ts']
+                    self.pixels[place] = color
+                    eventloop.call_later(self.np_duration, self.np_change, event, True, False)
+            else:
+                if self.np_pixels[ev]['ts'] == event['ts']:
+                    self.pixels[place] = black
+        # and error for unhandled
+        elif config.debug: print("np_change: Unexpected 'event' passed: {}".format(event))
 
     def button_watcher(self, gpio_line, cb):
         self.buttons['line_'+str(gpio_line)] = Button(gpio_line)
@@ -451,17 +693,19 @@ class io_controller(object):
         # manage queue by limiting how old the shown messages can be
         self.msg_max_time_diff = msg_timeout
 
+    def setup_btns(self):
+        for action in self.gpio_con.button_lines.keys():
+            if self.gpio_con.button_lines[action] != None:
+                if action == 'show_stats':
+                    self.gpio_con.button_watcher(self.gpio_con.button_lines[action], self.show_stats_cb)
+
     # callback for show_stats button
     def show_stats_cb(self):
         if self.print_data:
             print("Show stats callback!")
 
     # main io loop
-    def io_loop(self):
-        for action in self.gpio_con.button_lines.keys():
-            if self.gpio_con.button_lines[action] != None:
-                if action == 'show_stats':
-                    self.gpio_con.button_watcher(self.gpio_con.button_lines[action], self.show_stats_cb)
+    async def io_loop(self):
         while True:
             if self.print_data:
                 print(f"Timestamp: {self.wsc.timestamp} GPS: {self.wsc.gps_fix}")
@@ -480,12 +724,12 @@ class io_controller(object):
                     if disp_msg['ts'] == -1 or (self.wsc.timestamp - disp_msg['ts']) <= self.msg_max_time_diff:
                         if self.print_data:
                             print(disp_msg['text'])
-                    time.sleep(self.msg_delay)
+                    await asyncio.sleep(self.msg_delay)
                     msg_shown = msg_shown + 1
                     # bail if showing another message with delay status update
                     if (msg_shown + 1) * self.msg_delay > self.loop_delay:
                         break
-            time.sleep(self.loop_delay - (msg_shown * self.msg_delay))
+            await asyncio.sleep(self.loop_delay - (msg_shown * self.msg_delay))
 
 #####
 #####
@@ -664,11 +908,15 @@ if __name__ == "__main__":
     # load config
     config = configuration()
 
-    if config.debug:
+    eventloop = asyncio.get_event_loop()
+
+    events = event_control()
+
+    if config.debug_ws:
         print("Enabling trace on websocket-client")
         websocket.enableTrace(True)
     wsc = ws_connector(config.address, config.port, config.username, config.password,
-                       reconnect=config.reconnect, reconnect_delay=config.reconnect_delay, debug=config.debug)
+                       reconnect=config.reconnect, reconnect_delay=config.reconnect_delay, debug=config.debug_ws)
 
     if config.local_process_management['enabled']:
         try:
@@ -679,25 +927,61 @@ if __name__ == "__main__":
         # handle process management
 
     if config.local_gpio['enabled']:
-        if config.local_gpio['use_gpiozero']:
-            try:
-                from gpiozero import LED, Button
-            except:
-                print("Failed to load gpiozero python3 module. Installation is available from pip")
-                sys.exit(1)
-            try: config.local_gpio['input_buttons']
-            except:
-                print("ERROR: In configuration 'local_gpio' is enabled but 'input_buttons' is not defined!")
-                sys.exit(1)
-            try: config.local_gpio['leds']
-            except:
-                print("ERROR: In configuration 'local_gpio' is enabled but 'leds' is not defined!")
-                sys.exit(1)
-            gpio = gpio_controller(config.local_gpio['input_buttons'], config.local_gpio['leds'])
+        gpio = gpio_controller()
+
+        if 'input_buttons' in config.local_gpio.keys():
+            if 'enabled' in config.local_gpio['input_buttons'].keys() and config.local_gpio['input_buttons']['enabled']:
+                if 'use_gpiozero' in config.local_gpio['input_buttons'].keys() and config.local_gpio['input_buttons']['use_gpiozero']:
+                    try:
+                        from gpiozero import Button
+                    except:
+                        print("Failed to load gpiozero python3 module. Installation is available from pip")
+                        sys.exit(1)
+                    gpio.configure_buttons(config.local_gpio['input_buttons'])
+                else:
+                    print("ERROR: In configuration 'input_buttons' is enabled but 'use_gpiozero' is not True")
+                    print("Currently no other gpio libraries are supported! Skipping section.")
+            else: print("'input_buttons' disabled in config.")
         else:
-            print("ERROR: In configuration 'local_gpio' is enabled but 'use_gpiozero' is not True Currently no other gpio libraries are supported!")
-            print("Disabling local_gpio")
-            gpio = None
+            print("In configuration 'local_gpio' is enabled, no 'input_buttons' sections found!")
+
+        if 'leds' in config.local_gpio.keys():
+            if 'enabled' in config.local_gpio['leds'].keys() and config.local_gpio['leds']['enabled']:
+                if 'use_gpiozero' in config.local_gpio['leds'].keys() and config.local_gpio['leds']['use_gpiozero']:
+                    try:
+                        from gpiozero import LED
+                    except:
+                        print("Failed to load gpiozero python3 module. Installation is available from pip")
+                        sys.exit(1)
+                    gpio.configure_leds(config.local_gpio['leds'], events)
+                else:
+                    print("ERROR: In configuration 'leds' is enabled but 'use_gpiozero' is not True")
+                    print("Currently no other gpio libraries are supported! Skipping section.")
+            else: print("'leds' disabled in config.")
+        else:
+            print("In configuration 'local_gpio' is enabled, no 'leds' sections found!")
+
+        if 'neopixels' in config.local_gpio.keys():
+            if 'enabled' in config.local_gpio['neopixels'].keys() and config.local_gpio['neopixels']['enabled']:
+                if not 'pin' in config.local_gpio['neopixels'].keys():
+                    print("ERROR: In configuration 'neopixels' is enabled but 'pin' is not defined. Skipping")
+                elif not 'pixels' in config.local_gpio['neopixels'].keys():
+                    print("ERROR: In configuration 'neopixels' is enabled but 'pixels' is not defined. Skipping")
+                else:
+                    try:
+                        import board
+                    except:
+                        print("Failed to load board python3 module. Please install Adafruit-Blinka from pip.")
+                        sys.exit(1)
+                    try:
+                        import neopixel
+                    except:
+                        print("Failed to load neopixel python3 module. Please install adafruit-circuitpython-neopixel from pip")
+                        sys.exit(1)
+                    gpio.configure_neopixel(config.local_gpio['neopixels'], events)
+            else: print("'neopixels' disabled in config.")
+        else:
+            print("In configuration 'local_gpio' is enabled, no 'neopixels' sections found!")
     else:
         gpio = None
 
@@ -743,7 +1027,9 @@ if __name__ == "__main__":
     else:
         display = None
 
+    # setup io controller
     io = io_controller(wsc, gpio, display, show_stdout=config.data_to_stdout)
+    io.setup_btns()
 
     # create thread for websocket
     if config.debug:
@@ -756,8 +1042,18 @@ if __name__ == "__main__":
         # run io in main thread
         if config.debug:
             print("Running io loop in main thread")
-        io.io_loop()
+        eventloop.create_task(io.io_loop())
+        eventloop.run_forever()
     except KeyboardInterrupt:
+        # deinit pixels
+        if gpio.np_running:
+            try:
+                gpio.pixels.deinit()
+            except Exception as err:
+                if config.debug:
+                    traceback.print_tb(err.__traceback__)
+                print(err)
+                print("Error trying to deinit neopixels.")
         # shutdown thread
         wsc.reconnect = False
         wsc.ws.close()
