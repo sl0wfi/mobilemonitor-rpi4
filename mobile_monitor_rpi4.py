@@ -710,7 +710,7 @@ class io_controller(object):
             if self.print_data:
                 print(f"Timestamp: {self.wsc.timestamp} GPS: {self.wsc.gps_fix}")
             if self.i2c_disp != None:
-                self.i2c_disp(self.wsc.timestamp, self.wsc.gps_fix)
+                self.i2c_disp.draw_screen(self.wsc.timestamp, self.wsc.gps_fix)
             msg_shown = 0
             # check for error state
             if self.wsc.error_state > 0:
