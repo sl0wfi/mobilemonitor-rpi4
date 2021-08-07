@@ -25,13 +25,21 @@ except:
     print("Failed to load websocket python3 module. Install using 'pip3 install websocket-client'")
     sys.exit(1)
 
+# import pyYaml
+# yaml files allow comments for config documentations.
+try:
+    import yaml
+except:
+    print("Failed to load websocket python3 module. Install using 'pip3 install pyyaml'")
+    sys.exit(1)
+
 # configuration class
 class configuration(object):
     def __init__(self):
             # set up and run argument parser
             self.parser = argparse.ArgumentParser(description="{}, a mobile wireless monitoring platform".format(sys.argv[0]))
             self.parser.add_argument('-c',"--config", action="store", dest="config_file",
-                                            default="config.json", help="json config file, default config.json")
+                                            default="config.yaml", help="yaml config file, default config.yaml")
             self.parser.add_argument('-k','--kismet-host', action="store", dest="host", help="remote Kismet server on host:port")
             self.parser.add_argument('-u',"--user", action="store", dest="user", help="Kismet username for websocket eventbus")
             self.parser.add_argument('-p',"--password", action="store", dest="password", help="Kismet password for websocket eventbus")
@@ -57,11 +65,11 @@ class configuration(object):
                 print("configuration file {} not readable!".format(self.config_file))
                 sys.exit(1)
             try:
-                with open(os.path.expanduser(self.config_file), "r") as json_file:
-                    conf_data = json.load(json_file)
+                with open(os.path.expanduser(self.config_file), "r") as yaml_file:
+                    conf_data = yaml.safe_load(yaml_file)
             except Exception as err:
                 print(err)
-                print("Error parsing json config file {}".format(self.config_file))
+                print("Error parsing yaml config file {}".format(self.config_file))
                 sys.exit(1)
 
             # check for debugging
