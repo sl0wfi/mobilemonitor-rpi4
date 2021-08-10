@@ -20,6 +20,7 @@ local_gpio:
   leds:
     enabled: true
     use_gpiozero: true
+    duration: 0.4
     lines:
     - function: new_ssid
       gpio_pin: 23
@@ -35,7 +36,7 @@ local_gpio:
     count: 8
     brightness: 0.2
     order: GRB
-    duration: 0.3
+    duration: 0.4
     pixels:
     - color:
       - 255
@@ -67,6 +68,8 @@ i2c_display:
   driver: adafruit_ssd1306
   width: 128
   height: 32
+  msg_disp_time: 1
+  msg_max_age: 10
 msg_to_stdout: true
 debug: false
 debug_ws: false
