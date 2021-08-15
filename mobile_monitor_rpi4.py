@@ -594,21 +594,20 @@ class gpio_controller(object):
             try:
                 for i in range(len(neopixels['pixels'])):
                     try:
+                        # writing to the pixels mainly to ensure permissions
+                        self.pixels[i] = neopixels['pixels'][i]['color']
+                        time.sleep(.1)
+                        self.pixels[i] = [0] * len(neopixels['pixels'][i]['color'])
                         for ev in ws_evt.keys():
-                            if neopixels['pixels'][i]['function'] == ev:
+                            if "function" in neopixels['pixels'][i].keys() and neopixels['pixels'][i]['function'] == ev:
                                 self.np_pixels[ev] = { 'place': i,
                                                        'color': neopixels['pixels'][i]['color'] }
-                                # writing to the pixels mainly to ensure permissions
-                                self.pixels[i] = neopixels['pixels'][i]['color']
-                                time.sleep(.1)
-                                self.pixels[i] = [0] * len(neopixels['pixels'][i]['color'])
                                 ws_evt[ev].append(self.np_change)
                     except Exception as err:
                         if config.debug:
                             traceback.print_tb(err.__traceback__)
                             print(err)
                         print("Failed to configure 'pixels' entry in 'neopixels':")
-                        print(np)
             except Exception as err:
                 if config.debug:
                     traceback.print_tb(err.__traceback__)
