@@ -933,10 +933,6 @@ class i2c_controller(object):
         else:
             self.ut_str = "Not Connected"
 
-#####
-#####
-##### Start OLD CODE
-
 #Look for kismet, start if not running, etc
 def kismet_control():
     kismet_PID = NULL
@@ -962,65 +958,6 @@ def find_process(processName):
        except (psutil.NoSuchProcess, psutil.AccessDenied , psutil.ZombieProcess) :
            pass
     return listOfProcessObjects;
-
-def rgb_control(rgb_color):
-    bus = smbus.SMBus(1)
-    addr = 0x0d
-    rgb_off_reg = 0x07
-    rgb_effect_reg = 0x04
-    rgb_speed_reg = 0x05
-    rgb_color_reg = 0x06
-    Max_LED = 3
-
-    def setRGB(num, r, g, b):
-        if num >= Max_LED:
-            bus.write_byte_data(addr, 0x00, 0xff)
-            bus.write_byte_data(addr, 0x01, r&0xff)
-            bus.write_byte_data(addr, 0x02, g&0xff)
-            bus.write_byte_data(addr, 0x03, b&0xff)
-        elif num >= 0:
-            bus.write_byte_data(addr, 0x00, num&0xff)
-            bus.write_byte_data(addr, 0x01, r&0xff)
-            bus.write_byte_data(addr, 0x02, g&0xff)
-            bus.write_byte_data(addr, 0x03, b&0xff)
-
-    def setRGBEffect(effect):
-        if effect >= 0 and effect <= 4:
-            bus.write_byte_data(addr, rgb_effect_reg, effect&0xff)
-    def setRGBSpeed(speed):
-        if speed >= 1 and speed <= 3:
-            bus.write_byte_data(addr, rgb_speed_reg, speed&0xff)
-    def setRGBColor(color):
-        if color >= 0 and color <= 6:
-            bus.write_byte_data(addr, rgb_color_reg, color&0xff)
-
-    bus.write_byte_data(addr, rgb_off_reg, 0x00)
-    #time.sleep(1)
-    #0-water light, 1-breathing light, 2-marquee, 3-rainbow lights, 4-colorful lights
-    setRGBEffect(1)
-    #1-low speed, 2-medium speed (default), 3-high speed
-    setRGBSpeed(3)
-    #0-red, 1-green (default), 2-blue, 3-yellow, 4-purple, 5-cyan, 6-white
-    setRGBColor(rgb_color)
-    #Turn lED 1 RED
-    #bus.write_byte_data(addr, 0x00, 0x00)
-    #bus.write_byte_data(addr, 0x01, 0xFF)
-    #bus.write_byte_data(addr, 0x02, 0x00)
-    #bus.write_byte_data(addr, 0x03, 0x00)
-    #Trun LED 2 GREEN
-    #bus.write_byte_data(addr, 0x00, 0x01)
-    #bus.write_byte_data(addr, 0x01, 0x00)
-    #bus.write_byte_data(addr, 0x02, 0xFF)
-    #bus.write_byte_data(addr, 0x03, 0x00)
-    #Trun LED 3 BLUE
-    #bus.write_byte_data(addr, 0x00, 0x02)
-    #bus.write_byte_data(addr, 0x01, 0x00)
-    #bus.write_byte_data(addr, 0x02, 0x00)
-    #bus.write_byte_data(addr, 0x03, 0xFF)
-
-#####
-#####
-##### End OLD CODE
 
 if __name__ == "__main__":
     # load config
