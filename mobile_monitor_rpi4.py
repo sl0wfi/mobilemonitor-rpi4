@@ -1,14 +1,7 @@
 #This file written by sl0wfi
+#https://github.com/sl0wfi/mobilemonitor-rpi4
 #Many thanks to notaco as large chunks of this are from https://github.com/notaco/kismet_status_leds.py
 
-#Setup on kali as of July 2020
-#sudo apt-get install python3-pip
-#sudo pip3 install adafruit-circuitpython-ssd1306
-#pip3 install adafruit-blinka
-#sudo apt-get install python3-pil
-#sudo pip3 install psutil
-#sudo pip3 install requests
-#sudo pip3 install gpiozero
 #!/usr/bin/env python3
 # Import libraries
 
@@ -260,7 +253,7 @@ class ws_connector(object):
                                 on_open= lambda ws: self.on_open(self.ws),
                                 on_message= lambda ws,msg: self.on_message(self.ws, msg),
                                 on_error= lambda ws,msg: self.on_error(self.ws, msg),
-                                on_close= lambda ws: self.on_close(self.ws, self.close_status_code, self.close_msg))
+                                on_close= lambda ws: self.on_close(self.ws))
         #self.ws.on_open = self.on_open
         #self.ws.on_message = self.on_message
         #self.ws.on_error = self.on_error
