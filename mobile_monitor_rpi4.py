@@ -685,35 +685,56 @@ class gpio_controller(object):
 
 # class for display drawing and updating
 class i2c_controller(object):
-    def __init__(self, width, height, events, jsn, wsc):
+    def __init__(self, driver, width, height, events, jsn, wsc):
         # store connectors
         self.jc = jsn
         self.wc = wsc
+        self.driver = ""
 
-        # Create the I2C interface.
-        self.i2c = busio.I2C(SCL, SDA)
+        if driver == "adafruit_ssd1306":
+            # adafruit driver
+            # Create the I2C interface.
+            self.i2c = busio.I2C(SCL, SDA)
 
-        # no other drivers yet so use ssd1306
-        # Create the SSD1306 OLED class
-        self.disp = adafruit_ssd1306.SSD1306_I2C(width, height, self.i2c)
-
-        # do a quick test and then clear
-        self.disp.fill(1)
-        self.disp.show()
-        time.sleep(.2)
-        self.disp.fill(0)
-        self.disp.show()
+            # Create the SSD1306 OLED class
+            self.disp = adafruit_ssd1306.SSD1306_I2C(width, height, self.i2c)
+            self.driver = "adafruit"
+        elif driver.startswith("luma"):
+            # luma.core driver
+            # create I2C
+            self.i2c = i2c()
+            dlr = driver.find(":")
+            if driver[:dlr] == "luma.oled":
+                if driver[dlr+1:] == "ssd1306":
+                    # create ssd1306 display
+                    self.disp = ssd1306(self.i2c)
+                elif driver[dlr+1:] == "sh1106":
+                    # create sh1106 display
+                    self.disp = sh1106(self.i2c)
+            else:
+                print("i2c_controller: __init__ failed to find correct luma.core driver!")
+                sys.exit(1)
+            self.driver = "luma"
+        else:
+            print("i2c_controller: __init__ failed to find correct display driver!")
+            sys.exit(1)
 
         # Create blank image for drawing.
         # Make sure to create image with mode '1' for 1-bit color.
-        self.width = self.disp.width
-        self.height = self.disp.height
+        self.width = width
+        self.height = height
         self.g_height = round((self.height // 2)*.8)
         self.msg_cnt = ((self.height // 2) - 8) // 8
         self.screen = Image.new("1", (self.width, self.height))
 
         # Get drawing object to draw on image.
         self.draw = ImageDraw.Draw(self.screen)
+
+        # do a quick test and then clear
+        self.draw.rectangle((0, 0, self.width, self.height), outline=1, fill=1)
+        self.show_screen()
+        time.sleep(.2)
+        self.clear_screen()
 
         # Load default font.
         self.font = ImageFont.load_default()
@@ -752,6 +773,16 @@ class i2c_controller(object):
         events.ws_event["new_ts"].append(self.ts_change)
         events.ws_event["new_disp_msg"].append(self.disp_msg)
         events.ws_event["error_state"].append(self.error_state_change)
+
+    def show_screen(self):
+        if self.driver == "adafruit":
+            self.disp.image(self.screen)
+            self.disp.show()
+        elif self.driver == "luma":
+            self.disp.display(self.screen)
+        else:
+            print("i2c_controller: show_screen failed to find correct display driver!")
+            sys.exit(1)
 
     def draw_screen(self):
         # Draw a black filled box to clear the image.
@@ -793,16 +824,15 @@ class i2c_controller(object):
             self.screen.paste(self.graph_vec(self.min_vec, bar_w, self.g_height), (g_x, self.height-self.g_height))
 
         # Display image.
-        self.disp.image(self.screen)
-        self.disp.show()
+        self.show_screen()
         #time.sleep(self.DISPLAY_ON)
         #self.disp.fill(0)
         #self.disp.show()
         #time.sleep(self.DISPLAY_OFF)
 
     def clear_screen(self):
-        self.disp.fill(0)
-        self.disp.show()
+        self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
+        self.show_screen()
 
     def ws_state_change(self, event, init):
         if config.debug: print("ws_state_change: {}".format(str(event)))
@@ -1048,43 +1078,74 @@ if __name__ == "__main__":
 
     # setup i2c display
     if config.i2c_display['enabled']:
-        try:
-            import busio, smbus
-        except:
-            print("Failed to load busio and/or smbus python3 modules, required for i2c display")
-            sys.exit(1)
-        try:
-            from PIL import Image, ImageDraw, ImageFont
-        except Exception as e:
-            print("Failed to load PIL python3 module, required for i2c display")
-            sys.exit(1)
-        try:
-            from board import SCL, SDA
-        except Exception as e:
-            print("Failed to load board python3 module, required for i2c display")
-            sys.exit(1)
-        if config.i2c_display['driver'] == 'adafruit_ssd1306':
-            try:
-                import adafruit_ssd1306
-            except Exception as e:
-                print("Failed to load adafruit_ssd1306 python3 module, required for i2c display driver")
-                sys.exit(1)
-        else:
-            print("Incorrect setting for i2c_display 'driver': '{}'".format(config.i2c_display['driver']))
-            print("Supported drivers are: 'adafruit_ssd1306'")
-            sys.exit(1)
+        ### TODO: add wrapper to fail gracefully
+        i2c_driver_loaded = False
+
+        # check config for display
         if not 'width' in config.i2c_display.keys():
             print("No i2c_display 'width' set.")
             sys.exit(1)
         if not 'height' in config.i2c_display.keys():
             print("No i2c_display 'height' set.")
             sys.exit(1)
+
         try:
-            display = i2c_controller(config.i2c_display['width'], config.i2c_display['height'], events, jc, wsc)
-        except:
-            traceback.print_tb(err.__traceback__)
-            print(err)
-            print("ERROR: Failed creating display for i2c_display!")
+            from PIL import Image, ImageDraw, ImageFont
+        except Exception as e:
+            print("Failed to load PIL python3 module, required for i2c display")
+            sys.exit(1)
+
+        # check display driver and load modules accordingly
+        if config.i2c_display['driver'] == 'adafruit_ssd1306':
+            # setup for adafruit's ssd1306 driver
+            try:
+                import busio, smbus
+            except:
+                print("Failed to load busio and/or smbus python3 modules, required for i2c display")
+                sys.exit(1)
+            try:
+                from board import SCL, SDA
+            except Exception as e:
+                print("Failed to load board python3 module, required for i2c display")
+                sys.exit(1)
+            try:
+                import adafruit_ssd1306
+            except Exception as e:
+                print("Failed to load adafruit_ssd1306 python3 module, required for i2c display driver")
+                sys.exit(1)
+            i2c_driver_loaded = True
+        elif config.i2c_display['driver'].startswith("luma"):
+            dlr = config.i2c_display['driver'].find(":")
+            if config.i2c_display['driver'][:dlr] == "luma.oled":
+                if config.i2c_display['driver'][dlr+1:] == "ssd1306":
+                    try:
+                        from luma.core.interface.serial import i2c
+                        from luma.oled.device import ssd1306
+                    except Exception as e:
+                        print("Failed to load luma.core or luma.oled python3 module, required for i2c display driver")
+                        sys.exit(1)
+                    i2c_driver_loaded = True
+                elif config.i2c_display['driver'][dlr+1:] == "sh1106":
+                    try:
+                        from luma.core.interface.serial import i2c
+                        from luma.oled.device import sh1106
+                    except Exception as e:
+                        print("Failed to load luma.core or luma.oled python3 module, required for i2c display driver")
+                        sys.exit(1)
+                    i2c_driver_loaded = True
+
+        # create display
+        if i2c_driver_loaded:
+            try:
+                display = i2c_controller(config.i2c_display['driver'], config.i2c_display['width'], config.i2c_display['height'], events, jc, wsc)
+            except:
+                traceback.print_tb(err.__traceback__)
+                print(err)
+                print("ERROR: Failed creating display for i2c_display!")
+                sys.exit(1)
+        else:
+            print("Incorrect setting for i2c_display 'driver': '{}'".format(config.i2c_display['driver']))
+            print("Supported drivers are: 'adafruit_ssd1306', 'luma.oled:ssd1306', 'luma.oled:sh1106'")
             sys.exit(1)
     else:
         display = None
