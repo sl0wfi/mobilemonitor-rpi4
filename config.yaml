@@ -65,7 +65,7 @@ local_gpio:
       function: new_device
 i2c_display:
   enabled: true
-  driver: adafruit_ssd1306
+  driver: luma.oled:ssd1306
   width: 128
   height: 32
   msg_disp_time: 1
