@@ -33,7 +33,6 @@ except:
     print("Failed to load requests python3 module. Install using 'pip3 install requests'")
     sys.exit(1)
 
-
 # import pyYaml
 # yaml files allow comments for config documentations.
 try:
@@ -63,6 +62,7 @@ class configuration(object):
             self.parser.add_argument("--disable-stdout-msg", action="store_true", dest="no_stdout", help="disable writing messages to stdout")
             self.parser.add_argument("--debug", action="store_true", dest="debug", help="enable debug messages")
             self.parser.add_argument("--debug-ws", action="store_true", dest="debug_ws", help="enable websocket debug messages")
+            self.parser.add_argument("--debug-stats", action="store_true", dest="debug_stats", help="enable stats screen debug messages")
             cmd_args = self.parser.parse_args()
 
             # read configuration file
@@ -169,9 +169,18 @@ class configuration(object):
                 except Exception as err:
                     traceback.print_tb(err.__traceback__)
                     print(err)
-                    print("Unable to find configuration for kismet httpd reconnect delay!")
+                    print("Unable to find configuration for kismet httpd reconnect_delay!")
                     print("Setting to 3")
                     self.reconnect_delay = 3
+
+            try: self.json_update_delay = conf_data['kismet_httpd']['json_update_delay']
+            except Exception as err:
+                traceback.print_tb(err.__traceback__)
+                print(err)
+                print("Unable to find configuration for kismet httpd json_update_delay!")
+                print("Setting to 5")
+                self.json_update_delay = 5
+
 
             if cmd_args.no_lpm:
                 self.local_process_management = { "enabled": False }
@@ -234,6 +243,11 @@ class configuration(object):
                     print("Disabling.")
                     self.data_to_stdout = False
 
+            if cmd_args.debug_stats:
+                self.debug_stats = True
+            else:
+                self.debug_stats = False
+
 # class for event defs and control
 class event_control(object):
     def __init__(self):
@@ -246,8 +260,11 @@ class event_control(object):
                           'new_disp_msg': [],
                           'error_state': [] }
 
-    def btn_status(self):
-        print("Show status!")
+        self.btn_event = { 'stats': [] }
+
+    def btn_stats(self):
+        for cb in self.btn_event['stats']:
+            eventloop.call_soon(cb)
 
     def print_msg(self, event, timed):
         if event["type"] == "new_disp_msg":
@@ -386,22 +403,23 @@ class ws_connector(object):
         eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'error_state', 'state': 0})
         # put connect message on queue
         eventloop.call_soon_threadsafe(events.wsc_new, {'type': "new_disp_msg", 'text': "Connected to Kismet", 'ts': self.timestamp})
-        # send eventbus subscribes
-        time.sleep(1)
-        ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
-        time.sleep(1)
-        ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"}))
-        time.sleep(1)
-        ws.send(json.dumps({"SUBSCRIBE":"GPS_LOCATION"}))
-        time.sleep(1)
-        ws.send(json.dumps({"SUBSCRIBE":"PACKETCHAIN_STATS"}))
+        # call events
         eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'ws_connected', 'state': 2})
+        # send eventbus subscribes
+        time.sleep(.1)
+        ws.send(json.dumps({"SUBSCRIBE":"MESSAGE"}))
+        time.sleep(.1)
+        ws.send(json.dumps({"SUBSCRIBE":"TIMESTAMP"}))
+        time.sleep(.1)
+        ws.send(json.dumps({"SUBSCRIBE":"GPS_LOCATION"}))
+        time.sleep(.1)
+        ws.send(json.dumps({"SUBSCRIBE":"PACKETCHAIN_STATS"}))
 
     # method to run ws client
     def ws_run(self):
         eventloop.call_soon_threadsafe(events.wsc_new, {'type': 'ws_connected', 'state': 0})
         print("Starting websocket connection")
-        self.ws = websocket.WebSocketApp("ws://{}:{}/eventbus/events.ws?user={}&password={}".format(self.kismet_address,self.kismet_port,self.kismet_user,self.kismet_pass),
+        self.ws = websocket.WebSocketApp(f"ws://{self.kismet_address}:{self.kismet_port}/eventbus/events.ws?user={self.kismet_user}&password={self.kismet_pass}",
                                 on_open= lambda ws: self.on_open(self.ws),
                                 on_message= lambda ws,msg: self.on_message(self.ws, msg),
                                 on_error= lambda ws,msg: self.on_error(self.ws, msg),
@@ -420,24 +438,126 @@ class ws_connector(object):
 # class for making requests from json endpoints
 class json_connector(object):
     def __init__(self, addr, port, un, pw, **kwargs):
-        self.kismet_address = addr
-        self.kismet_port = port
-        self.kismet_user = un
-        self.kismet_pass = pw
-
-        self.base_uri = f"http://{un}:{pw}@{addr}:{port}"
+        self.session = requests.Session()
+        self.session.auth = (un, pw)
+        self.base_uri = f"http://{addr}:{port}"
 
         # init data
         self.status = None
+        # json endpoints to keep up to date
+        self.refresh_delay = config.json_update_delay
+        self.refresh_eps = [{ "name": "wifi_devs",
+                              "uri": "/devices/views/phy-IEEE802.11/devices.json",
+                              "filter": '{"fields":[["kismet.device.base.type","base_type"]]}' },
+                            { "name": "all_views",
+                              "uri": "/devices/views/all_views.json",
+                              "filter": '{"fields":[["kismet.devices.view.size","view_size"],'+
+                                                   '["kismet.devices.view.id","view_id"]]}' },
+                            { "name": "status",
+                              "uri": "/system/status.json",
+                              "filter": '{"fields":[["kismet.system.battery.percentage","batt_per"],'+
+                                                   '["kismet.system.memory.rrd","ram_rrd"],'+
+                                                   '["kismet.system.sensors.temp","temps"]]}' }]
+        self.raw_data = {}
+        for ep in self.refresh_eps:
+            self.raw_data[ep["name"]] = None
+        self.parsed_data = {}
 
         # add event cb
         events.ws_event["ws_connected"].append(self.ws_state_change)
 
+        # indicator for updater
+        self.thread_exit = False
+
+    def json_updater(self):
+        while True:
+            if self.thread_exit:
+                break
+            self.do_update()
+            self.parse_update()
+            time.sleep(self.refresh_delay)
+
+    def do_update(self):
+        if self.status != None:
+            for ep in self.refresh_eps:
+                req = self.session.post(f"{self.base_uri}{ep['uri']}", data={ "json": ep['filter'] })
+                if req.status_code == requests.codes.ok:
+                    self.raw_data[ep["name"]] = req.json()
+                else:
+                    if config.debug: print(f"json_connector: Bad status code from '{ep['uri']}'")
+                    self.raw_data[ep["name"]] = None
+
+    def parse_update(self):
+        if self.raw_data["wifi_devs"] != None:
+            (ap, dev, inferred, bridged, adhoc, wds) = [0]*6
+            for d in self.raw_data["wifi_devs"]:
+                if d["base_type"] == 'Wi-Fi AP':
+                    ap += 1
+                elif d["base_type"] == 'Wi-Fi Device':
+                    dev += 1
+                elif d["base_type"] == 'Wi-Fi Device (Inferred)':
+                    inferred += 1
+                elif d["base_type"] == 'Wi-Fi Bridged':
+                    bridged += 1
+                elif d["base_type"] == 'Wi-Fi Ad-Hoc':
+                    adhoc += 1
+                elif 'Wi-Fi WDS' in d["base_type"]:
+                    wds += 1
+                else:
+                    if config.debug: printf(f"parse_update: unable to parse base_type of '{dev['base_type']}'")
+            self.parsed_data["dot11_ap"] = ap
+            self.parsed_data["dot11_dev"] = dev
+            self.parsed_data["dot11_inferred"] = inferred
+            self.parsed_data["dot11_bridged"] = bridged
+            self.parsed_data["dot11_adhoc"] = adhoc
+            self.parsed_data["dot11_wds"] = wds
+        if self.raw_data["all_views"] != None:
+            for v in self.raw_data["all_views"]:
+                if v["view_id"] == 'phy-IEEE802.11':
+                    self.parsed_data["phy-IEEE802.11"] = v["view_size"]
+                    self.parsed_data["dot11_all_dev"] = v["view_size"]
+                if v["view_id"] == 'phydot11_accesspoints':
+                    self.parsed_data["dot11_ap_view"] = v["view_size"]
+                elif v["view_id"] == 'phy-Bluetooth':
+                    self.parsed_data["phy-Bluetooth"] = v["view_size"]
+                elif v["view_id"] == 'phy-BTLE':
+                    self.parsed_data["phy-BTLE"] = v["view_size"]
+                elif v["view_id"] == 'phy-RTL433':
+                    self.parsed_data["phy-RTL433"] = v["view_size"]
+                elif v["view_id"] == 'phy-RTLAMR':
+                    self.parsed_data["phy-RTLAMR"] = v["view_size"]
+                elif v["view_id"] == 'phy-RTLADSB':
+                    self.parsed_data["phy-RTLADSB"] = v["view_size"]
+                elif v["view_id"] == 'phy-NrfMousejack':
+                    self.parsed_data["phy-NrfMousejack"] = v["view_size"]
+                elif v["view_id"] == 'phy-802.15.4':
+                    self.parsed_data["phy-802.15.4"] = v["view_size"]
+        if self.raw_data["status"] != None:
+            max_temp = 0
+            for i in self.raw_data["status"]["temps"].keys():
+                if self.raw_data["status"]["temps"][i] > max_temp:
+                    max_temp = self.raw_data["status"]["temps"][i]
+            if max_temp != 0:
+                self.parsed_data["temperature"] = max_temp
+            else:
+                self.parsed_data["temperature"] = None
+
+            if self.raw_data["status"]["batt_per"] != 0:
+                self.parsed_data["battery"] = self.raw_data["status"]["batt_per"]
+            else:
+                self.parsed_data["battery"] = "NA"
+
+            if "kismet.common.rrd.minute_vec" in self.raw_data["status"]["ram_rrd"].keys():
+                start = self.raw_data["status"]["ram_rrd"]["kismet.common.rrd.last_time"] % 60
+                raw_ram = self.raw_data["status"]["ram_rrd"]["kismet.common.rrd.minute_vec"][0]
+                self.parsed_data["ram_used"] = str(raw_ram // 1024)+"MB"
+
     # event cb ws connection
     def ws_state_change(self, event, timed):
+        if config.debug: print("json_connector: ws_state_change called "+str(event))
         new_state = event["state"]
         if new_state == 2:
-            req = requests.get(f"{self.base_uri}/system/status.json")
+            req = self.session.get(f"{self.base_uri}/system/status.json")
             if req.status_code == requests.codes.ok:
                 self.status = req.json()
             else:
@@ -465,7 +585,7 @@ class gpio_controller(object):
                 try:
                     if btn['function'] == 'show_stats':
                         self.button_lines['show_stats'] = btn['gpio_pin']
-                        self.button_watcher(btn['gpio_pin'], events.btn_status)
+                        self.button_watcher(btn['gpio_pin'], events.btn_stats)
                 except Exception as err:
                     if config.debug:
                         traceback.print_tb(err.__traceback__)
@@ -681,16 +801,26 @@ class gpio_controller(object):
 
     def button_watcher(self, gpio_line, cb):
         self.buttons['line_'+str(gpio_line)] = Button(gpio_line)
-        self.buttons['line_'+str(gpio_line)].when_pressed = cb
+        self.buttons['line_'+str(gpio_line)].when_released = cb
+
+    def button_held(self, gpio_line):
+        return self.buttons['line_'+str(gpio_line)].is_pressed
 
 # class for display drawing and updating
 class i2c_controller(object):
-    def __init__(self, driver, width, height, events, jsn, wsc):
+    def __init__(self, driver, width, height, events, jsn, wsc, gpio):
         # store connectors
         self.jc = jsn
         self.wc = wsc
-        self.driver = ""
+        self.gc = gpio
 
+        # init current_screen and cb handlers
+        self.current_screen = "home"
+        self.handler_clear_stats = None
+        self.handler_overflow_stats = None
+
+        # setup display driver
+        self.driver = ""
         if driver == "adafruit_ssd1306":
             # adafruit driver
             # Create the I2C interface.
@@ -723,6 +853,7 @@ class i2c_controller(object):
         # Make sure to create image with mode '1' for 1-bit color.
         self.width = width
         self.height = height
+        self.txt_lines = self.height // 8
         self.g_height = round((self.height // 2)*.8)
         self.msg_cnt = ((self.height // 2) - 8) // 8
         self.screen = Image.new("1", (self.width, self.height))
@@ -767,12 +898,117 @@ class i2c_controller(object):
         self.msg_deque = deque([])
         self.msg_error = False
 
+        # init stats screen config
+        if "show_stats" in self.gc.button_lines.keys():
+            if not "stats_screen" in config.i2c_display.keys():
+                self.stats_screen = { "timeout": 3, "dot11": ["ap", "dev"], "phys": ["bluetooth", "btle"], "sys": ["ram"] }
+            else:
+                self.stats_screen = {}
+                if "timeout" in config.i2c_display["stats_screen"].keys():
+                    self.stats_screen["timeout"] = config.i2c_display["stats_screen"]["timeout"]
+                else:
+                    self.stats_screen["timeout"] = 3
+                if "dot11" in config.i2c_display["stats_screen"].keys():
+                    self.stats_screen["dot11"] = config.i2c_display["stats_screen"]["dot11"]
+                if "phys" in config.i2c_display["stats_screen"].keys():
+                    self.stats_screen["phys"] = config.i2c_display["stats_screen"]["phys"]
+                if "sys" in config.i2c_display["stats_screen"].keys():
+                    self.stats_screen["sys"] = config.i2c_display["stats_screen"]["sys"]
+            self.config_stats_template()
+            self.stats_output = []
+            self.stats_output_multiplier = 0
+        else:
+            self.stats_screen = None
+
         # add event cb
         events.ws_event["ws_connected"].append(self.ws_state_change)
         events.ws_event["gps_status"].append(self.gps_state_change)
         events.ws_event["new_ts"].append(self.ts_change)
         events.ws_event["new_disp_msg"].append(self.disp_msg)
         events.ws_event["error_state"].append(self.error_state_change)
+        events.btn_event['stats'].append(self.show_stats)
+
+    def config_stats_template(self):
+        self.stats_template = []
+        for ssk in self.stats_screen.keys():
+            if ssk == "timeout":
+                continue
+            if ssk == "dot11":
+                if len(self.stats_screen["dot11"]) > 0:
+                    dot11_tmpl = { "label": ["WiFi", "Wi", "W"],
+                                   "el": [] }
+                    for type in self.stats_screen["dot11"]:
+                        if type == "ap":
+                            dot11_tmpl["el"].append({ "pd": "dot11_ap",
+                                                      "label": ["APs", "AP", "A"] })
+                        elif type == "dev":
+                            dot11_tmpl["el"].append({ "pd": "dot11_dev",
+                                                      "label": ["Devs", "Dv", "D"] })
+                        elif type == "inferred":
+                            dot11_tmpl["el"].append({ "pd": "dot11_inferred",
+                                                      "label": ["Inf", "In", "I"] })
+                        elif type == "bridged":
+                            dot11_tmpl["el"].append({ "pd": "dot11_bridged",
+                                                      "label": ["Brdg", "Br", "B"] })
+                        elif type == "adhoc":
+                            dot11_tmpl["el"].append({ "pd": "dot11_adhoc",
+                                                      "label": ["Adh", "Ah", "A"] })
+                        elif type == "wds":
+                            dot11_tmpl["el"].append({ "pd": "dot11_wds",
+                                                      "label": ["Wds", "Wd", "W"] })
+                        elif type == "all_dev":
+                            dot11_tmpl["el"].append({ "pd": "dot11_all_dev",
+                                                      "label": ["Total", "Tl", "T"] })
+                        elif type == "ap_view":
+                            dot11_tmpl["el"].append({ "pd": "dot11_ap_view",
+                                                      "label": ["APs", "AP", "A"] })
+                    self.stats_template.append(dot11_tmpl)
+            if ssk == "phys":
+                if len(self.stats_screen["phys"]) > 0:
+                    phys_tmpl = { "el": [] }
+                    for type in self.stats_screen["phys"]:
+                        if type == "dot11":
+                            phys_tmpl["el"].append({ "pd": "phy-IEEE802.11",
+                                                     "label": ["WiFi-total", "WiFi", "Wi"] })
+                        elif type == "bluetooth":
+                            phys_tmpl["el"].append({ "pd": "phy-Bluetooth",
+                                                     "label": ["Bluetooth", "Bth", "Bt"] })
+                        elif type == "btle":
+                            phys_tmpl["el"].append({ "pd": "phy-BTLE",
+                                                     "label": ["BTLE", "BLE", "BL"] })
+                        elif type == "rtl433":
+                            phys_tmpl["el"].append({ "pd": "phy-RTL433",
+                                                     "label": ["RTL433", "RT433", "R4"] })
+                        elif type == "rtlamr":
+                            phys_tmpl["el"].append({ "pd": "phy-RTLAMR",
+                                                     "label": ["RTLAMR", "RTAMR", "RA"] })
+                        elif type == "rtladsb":
+                            phys_tmpl["el"].append({ "pd": "phy-RTLADSB",
+                                                     "label": ["RTLADSB", "ADSB", "AD"] })
+                        elif type == "mousejack":
+                            phys_tmpl["el"].append({ "pd": "phy-NrfMousejack",
+                                                     "label": ["NrfMJack", "MJack", "MJ"] })
+                        elif type == "ieee802154":
+                            phys_tmpl["el"].append({ "pd": "phy-802.15.4",
+                                                     "label": ["802.15.4", "15.4", "Zb"] })
+                    self.stats_template.append(phys_tmpl)
+            if ssk == "sys":
+                if len(self.stats_screen["sys"]) > 0:
+                    sys_tmpl = { "label": ["System", "Sys", "S"],
+                                   "el": [] }
+                    for type in self.stats_screen["sys"]:
+                        if type == "ram":
+                            sys_tmpl["el"].append({ "pd": "ram_used",
+                                                    "label": ["RAM", "RM", "R"] })
+                        elif type == "temp":
+                            sys_tmpl["el"].append({ "pd": "temperature",
+                                                    "label": ["Temp", "Tmp", "T"] })
+                        elif type == "batt_per":
+                            sys_tmpl["el"].append({ "pd": "battery",
+                                                    "label": ["Batt", "Ba", "B"] })
+                    self.stats_template.append(sys_tmpl)
+
+        if config.debug_stats: print("stats_template: "+ str(self.stats_template))
 
     def show_screen(self):
         if self.driver == "adafruit":
@@ -783,6 +1019,10 @@ class i2c_controller(object):
         else:
             print("i2c_controller: show_screen failed to find correct display driver!")
             sys.exit(1)
+
+    def check_line_length(self, txt):
+        (li_w, li_h) = self.font.getsize(txt)
+        return li_w < self.width
 
     def draw_screen(self):
         # Draw a black filled box to clear the image.
@@ -815,13 +1055,19 @@ class i2c_controller(object):
         ut_x = (self.width // 2) - (ut_w // 2)
         self.draw.text((ut_x, -2), up_str, font=self.font, fill=255)
 
-        for i in range(self.msg_cnt):
-            self.draw.text((0, 8*(i+1)), self.msg[i], font=self.font, fill=255)
+        # fill rest of screen according to current_screen
+        if self.current_screen == "stats":
+            self.draw_stats()
+        else: # assume "home"
+            # draw messages
+            for i in range(self.msg_cnt):
+                self.draw.text((0, 8*(i+1)), self.msg[i], font=self.font, fill=255)
 
-        if self.min_vec != None:
-            bar_w = self.width//len(self.min_vec)
-            g_x = (self.width - (bar_w*len(self.min_vec)))//2
-            self.screen.paste(self.graph_vec(self.min_vec, bar_w, self.g_height), (g_x, self.height-self.g_height))
+            # draw packet graph
+            if self.min_vec != None:
+                bar_w = self.width//len(self.min_vec)
+                g_x = (self.width - (bar_w*len(self.min_vec)))//2
+                self.screen.paste(self.graph_vec(self.min_vec, bar_w, self.g_height), (g_x, self.height-self.g_height))
 
         # Display image.
         self.show_screen()
@@ -829,6 +1075,144 @@ class i2c_controller(object):
         #self.disp.fill(0)
         #self.disp.show()
         #time.sleep(self.DISPLAY_OFF)
+
+    def draw_stats(self):
+        if config.debug_stats: print("--- draw_stats called!")
+        # number of lines available
+        total_lines = self.txt_lines - 1
+        output = []
+
+        # handle overflow case
+        if len(self.stats_output) > 0:
+            output = self.stats_output[total_lines*self.stats_output_multiplier:]
+        else:
+            # get all sub elements and calc sub elements per line
+            all_sub_el = []
+            el_lengths = []
+            max_el = 0
+            for el in self.stats_template:
+                el_cnt = len(el["el"])
+                if "label" in el.keys():
+                    el_cnt += 1
+                    all_sub_el.append({"pd": None, "label": el["label"]})
+                if el_cnt > max_el:
+                    max_el = el_cnt
+                el_lengths.append(el_cnt)
+                all_sub_el = all_sub_el + el['el']
+            sub_el_per_line = len(all_sub_el) // total_lines
+            if sub_el_per_line == 0:
+                sub_el_per_line = 1
+
+            # outer loop for main element output
+            prior_sub_epl = []
+            while len(output) != total_lines and (sub_el_per_line > 0 and sub_el_per_line <= max_el):
+                # init loop variables
+                output = []
+                used_lines = 0
+
+                # setup inner loop
+                el_index = 0
+                sub_el_offset = 0
+                while el_index < len(el_lengths):
+                    sub_el_cnt = el_lengths[el_index]
+                    el_index += 1
+                    cur_el_lines = total_lines * (sub_el_cnt/len(all_sub_el))
+                    if not isinstance(cur_el_lines, int):
+                        cur_el_lines = cur_el_lines // 1
+                        cur_el_lines += 1
+
+                    # setup a list of sub elements to run through
+                    sub_el_list = []
+                    if len(all_sub_el) > sub_el_offset + sub_el_cnt:
+                        sub_el_list = sub_el_list + all_sub_el[sub_el_offset:sub_el_offset+sub_el_cnt]
+                    else:
+                        sub_el_list = sub_el_list + all_sub_el[sub_el_offset:]
+                    # start processing list
+                    el_output = []
+                    sel_list_offset = 0
+                    el_sel_per_line = sub_el_per_line
+                    if el_sel_per_line > sub_el_cnt:
+                        el_sel_per_line = sub_el_cnt
+                    if config.debug_stats: print("sub_el: "+str(sub_el_list))
+                    while sel_list_offset < sub_el_cnt and el_sel_per_line <= sub_el_cnt:
+                        if len(sub_el_list) > sel_list_offset + el_sel_per_line:
+                            el_showing = sub_el_list[sel_list_offset:sel_list_offset + el_sel_per_line]
+                        else:
+                            el_showing = sub_el_list[sel_list_offset:]
+                        new_line = ""
+                        while new_line == "" or not self.check_line_length(new_line):
+                            for lbl_brv in range(3):
+                                new_line = ""
+                                el_added = 0
+                                for el in el_showing:
+                                    el_added += 1
+                                    if el["pd"] != None:
+                                        if el["pd"] in self.jc.parsed_data.keys():
+                                            new_line = new_line + str(self.jc.parsed_data[el["pd"]]) + " " + el["label"][lbl_brv]
+                                        else:
+                                            new_line = new_line + "NA " + el["label"][lbl_brv]
+                                    else:
+                                        new_line = new_line + el["label"][lbl_brv] + ":"
+                                    if el_added < len(el_showing):
+                                        new_line = new_line + " "
+                                if self.check_line_length(new_line):
+                                    break
+                            if not self.check_line_length(new_line):
+                                el_showing.pop()
+                        if config.debug_stats: print("eselpl: "+str(el_sel_per_line)+" nl: "+new_line)
+                        sel_list_offset += len(el_showing)
+                        el_output.append(new_line)
+                        if len(el_output) > cur_el_lines:
+                            el_sel_per_line += 1
+                            if el_sel_per_line > sub_el_cnt:
+                                break
+                            sel_list_offset = 0
+                            el_output = []
+                    output = output + el_output
+                    sub_el_offset += sub_el_cnt
+                    if config.debug_stats: print("output: "+str(output))
+                best_out = {"len": 0, "val": 0}
+                for pse in prior_sub_epl:
+                    if pse["len"] < total_lines and pse["len"] > best_out["len"]:
+                        best_out = pse
+                if sub_el_per_line == best_out["val"]:
+                    break
+                else:
+                    prior_sub_epl.append({"len": len(output), "val": sub_el_per_line})
+                if len(output) > total_lines:
+                    sub_el_per_line += 1
+                if len(output) < total_lines:
+                    sub_el_per_line -= 1
+                if config.debug_stats: print(str(sub_el_per_line)+" selpl, "+str(max_el)+" max_el, "+str(len(output))+" output len")
+                # rework layout for overflow case
+                if len(output) > total_lines and sub_el_per_line > max_el:
+                    total_lines = total_lines + (self.txt_lines - 1)
+                    sub_el_per_line = len(all_sub_el) // total_lines
+                    if sub_el_per_line == 0:
+                        sub_el_per_line = 1
+
+
+        # write output
+        for i in range(self.txt_lines - 1):
+            if i < len(output):
+                self.draw.text((0, (8*i)+7), output[i], font=self.font, fill=255)
+        if len(output) > self.txt_lines - 1 and len(self.stats_output) == 0:
+            self.stats_output = output
+            self.stats_output_multiplier = 0
+            self.handler_overflow_stats = eventloop.call_at(eventloop.time()+self.stats_screen["timeout"], self.stats_timeout)
+
+    def stats_timeout(self):
+        if (self.stats_output_multiplier + 1) * (self.txt_lines - 1) >= len(self.stats_output):
+            self.stats_output = []
+            self.stats_output_multiplier = 0
+            self.handler_overflow_stats = None
+            if self.handler_clear_stats == None:
+                self.show_home("stats")
+                return
+        else:
+            self.stats_output_multiplier += 1
+            self.handler_overflow_stats = eventloop.call_at(eventloop.time()+self.stats_screen["timeout"], self.stats_timeout)
+        self.draw_screen()
 
     def clear_screen(self):
         self.draw.rectangle((0, 0, self.width, self.height), outline=0, fill=0)
@@ -909,7 +1293,7 @@ class i2c_controller(object):
         return vg
 
     def disp_msg(self, event, timed):
-        print(str(event), " ", str(timed), " ", self.msg[0])
+        if config.debug: print(str(event), " ", str(timed), " ", self.msg[0])
         if not timed and self.msg[0] == "...":
             self.msg[0] = event["text"]
             eventloop.call_later(self.msg_disp_time, self.disp_msg, event, True)
@@ -963,6 +1347,34 @@ class i2c_controller(object):
         else:
             self.ut_str = "Not Connected"
 
+    def show_stats(self):
+        if config.debug: print("i2c_controller: show_stats called")
+
+        if self.stats_screen == None:
+            if config.debug: print("i2c_controller: no stats_screen defined, show_stats should not have been called!")
+            return
+
+        if self.handler_clear_stats != None:
+            self.handler_clear_stats.cancel()
+        self.handler_clear_stats = eventloop.call_at(eventloop.time()+self.stats_screen["timeout"], self.show_home, "stats")
+
+        self.current_screen = "stats"
+        self.draw_screen()
+        jc.do_update()
+
+    def show_home(self, prev):
+        if prev == "stats":
+            if self.gc.button_held(self.gc.button_lines['show_stats']):
+                self.handler_clear_stats = eventloop.call_at(eventloop.time()+self.stats_screen["timeout"], self.show_home, "stats")
+                return
+            else:
+                self.handler_clear_stats = None
+            if self.handler_overflow_stats != None:
+                return
+
+        self.current_screen = "home"
+        self.draw_screen()
+
 #Look for kismet, start if not running, etc
 def kismet_control():
     kismet_PID = NULL
@@ -1005,7 +1417,10 @@ if __name__ == "__main__":
         websocket.enableTrace(True)
     wsc = ws_connector(config.address, config.port, config.username, config.password,
                        reconnect=config.reconnect, reconnect_delay=config.reconnect_delay, debug=config.debug_ws)
+    # so far json is only supplying metrics, if this holds init might be avoided if there is no screen enabled
     jc = json_connector(config.address, config.port, config.username, config.password)
+    jc_thread = threading.Thread(target=jc.json_updater)
+    jc_thread.start()
 
     # local process manager
     if config.local_process_management['enabled']:
@@ -1137,7 +1552,8 @@ if __name__ == "__main__":
         # create display
         if i2c_driver_loaded:
             try:
-                display = i2c_controller(config.i2c_display['driver'], config.i2c_display['width'], config.i2c_display['height'], events, jc, wsc)
+                ## TODO: check i2c bus for display
+                display = i2c_controller(config.i2c_display['driver'], config.i2c_display['width'], config.i2c_display['height'], events, jc, wsc, gpio)
             except:
                 traceback.print_tb(err.__traceback__)
                 print(err)
@@ -1173,10 +1589,13 @@ if __name__ == "__main__":
         # clear i2c display
         if display != None:
             display.clear_screen()
-        # shutdown thread
+        # shutdown threads
+        jc.thread_exit = True
         wsc.reconnect = False
         wsc.ws.close()
         # wait for thread
         ws_thread.join()
+        print("Websocket thread ended. Waiting for json thread.")
+        jc_thread.join()
     # both threads finished
     print("Program finished.")

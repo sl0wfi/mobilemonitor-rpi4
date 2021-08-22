@@ -6,6 +6,7 @@ kismet_httpd:
   uri_prefix: ''
   reconnect: true
   reconnect_delay: 3
+  json_update_delay: 5
 local_process_management:
   enabled: true
   kismet_server: true
@@ -65,11 +66,30 @@ local_gpio:
       function: new_device
 i2c_display:
   enabled: true
-  driver: luma.oled:ssd1306
+  # current drivers: adafruit_ssd1306, luma.oled:ssd1306, luma.oled:sh1106
+  driver: adafruit_ssd1306
   width: 128
   height: 32
   msg_disp_time: 1
   msg_max_age: 10
+  stats_screen:
+    timeout: 3 # delay in seconds from button release to return to home screen
+    dot11: # parsed from "kismet.device.base.type" in views/phy-IEEE802.11/devices
+           # values for parsed data: ap, dev, inferred, bridged, adhoc, wds
+           # parsed dev includes non-ap/wds/adhoc devices captured sending packets with 802.11 headers
+           # parsed ap includes inferred aps, which only client packets were captured
+           # values from view data: all_dev, ap_view
+           # totals for "IEEE802.11 devices" and "IEEE802.11 Access Points"
+      - ap
+      - dev
+    phys: # count from "kismet.devices.view.size" in views/all_views
+          # possible values: dot11, bluetooth, btle, rtl433, rtlamr, rtladsb, mousejack, ieee802154
+      - bluetooth
+      - btle
+    sys: # parsed from system/status
+         # values: ram, temp, batt_per
+         # temp is max value of available sensors
+      - ram
 msg_to_stdout: true
 debug: false
 debug_ws: false
